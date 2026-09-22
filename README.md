@@ -26,6 +26,10 @@ A standalone, multi-account lifecycle monitor and alerting utility for Google An
   - Live StatusNotifierItem (SNI) indicator natively integrated into Ubuntu/GNOME's top panel.
   - Dynamic colored quota progress ring and lightning badge.
   - 1-click dropdown menu to hot-swap accounts, trigger auto-failover, and view live quota countdowns.
+- **🌐 Egress IP & Country Geolocation Detection**:
+  - Live public exit IP, ISO country code, flag emoji, and city displayed directly on the top-bar tray tooltip and menu.
+  - **VPN Disconnect & Geo-Block Alerts**: Warns immediately if your IP falls into an Antigravity restricted region (`IR`, `RU`, `BY`, `KP`, `CU`, `SY`, `CN`).
+  - Auditable via `agy-token ip`, `agy-token status`, web dashboard, and `agy-token doctor`.
 - **Flexible Display Surfaces**:
   - **Top-Bar Tray Indicator**: Always-visible top panel icon with instant switch menu.
   - **Rich Terminal Dashboard**: Beautiful colored progress bars, tables, and countdowns.
@@ -194,6 +198,19 @@ agy-token doctor --fix
 
 # Fast offline check without pinging Google endpoints:
 agy-token doctor --no-network
+```
+
+### 10. Egress IP & Geolocation Audit
+Verify your public egress IP address, country, ISP, and Antigravity compatibility:
+```bash
+# Check egress IP and region:
+agy-token ip
+
+# Bypass cache and force re-query:
+agy-token ip --refresh
+
+# Machine-readable JSON output:
+agy-token ip --json
 ```
 
 ---

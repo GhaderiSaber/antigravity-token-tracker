@@ -20,6 +20,7 @@ from . import lifecycle
 from . import notifier
 from . import auth
 from . import failover
+from . import geo
 
 console = Console()
 
@@ -117,11 +118,25 @@ def cmd_status(args):
     for email, q in all_quotas.items():
         analyzed[email] = lifecycle.analyze_account_lifecycle(q)
 
+    # IP & Geolocation
+    geo_info = geo.get_ip_geo(force_refresh=getattr(args, "force", False))
+    ip_str = geo_info.get("ip", "Unknown")
+    flag = geo_info.get("flag", "🌐")
+    loc = geo_info.get("country_name", "Unknown")
+    if geo_info.get("city"):
+        loc = f"{geo_info.get('city')}, {loc}"
+
+    if geo_info.get("is_restricted"):
+        ip_status_badge = f"[bold white on red] ⚠️ RESTRICTED REGION ({geo_info.get('country_code')}) - VPN REQUIRED [/bold white on red]"
+    else:
+        ip_status_badge = "[bold green]✓ Safe Egress[/bold green]"
+
     # Header
     console.print()
     console.print("[bold cyan]═══════════════════════════════════════════════════════════════════════════════[/bold cyan]")
     console.print("[bold white]            ⚡ ANTIGRAVITY TOKEN & WEEKLY QUOTA LIFECYCLE TRACKER             [/bold white]")
     console.print(f"[dim]                Current Local Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (UTC: {datetime.now(timezone.utc).strftime('%H:%M:%S')})[/dim]")
+    console.print(f"[dim]                🌐 Exit IP: [/dim][bold]{flag} {ip_str}[/bold] [dim]({loc})[/dim]  {ip_status_badge}")
     console.print("[bold cyan]═══════════════════════════════════════════════════════════════════════════════[/bold cyan]")
     console.print()
 
@@ -741,6 +756,36 @@ def cmd_doctor(args):
     return 0
 
 
+def cmd_ip(args):
+    """Audits public egress IP, geolocation, ISP, and Antigravity compatibility."""
+    force = getattr(args, "refresh", False)
+    geo_info = geo.get_ip_geo(force_refresh=force)
+
+    if getattr(args, "json", False):
+        print(json.dumps(geo_info, indent=2))
+        return 0
+
+    table = Table(title="🌐 Egress IP & Geolocation Audit", box=None)
+    table.add_column("Property", style="bold cyan", ratio=1)
+    table.add_column("Value", ratio=2)
+
+    table.add_row("Public IP", geo_info.get("ip", "Unknown"))
+    table.add_row("Country", f"{geo_info.get('flag', '🌐')} {geo_info.get('country_name', 'Unknown')} ({geo_info.get('country_code', '')})")
+    table.add_row("Region / State", geo_info.get("region", "N/A") or "N/A")
+    table.add_row("City", geo_info.get("city", "N/A") or "N/A")
+    table.add_row("ISP / Organization", geo_info.get("isp") or geo_info.get("org") or "N/A")
+
+    if geo_info.get("is_restricted"):
+        status_msg = "[bold red]⚠️ RESTRICTED REGION (Google APIs Blocked) - VPN REQUIRED![/bold red]"
+    else:
+        status_msg = "[bold green]✓ Compatible (Google Antigravity APIs Accessible)[/bold green]"
+    table.add_row("Antigravity Status", status_msg)
+
+    console.print()
+    console.print(Panel(table, border_style="red" if geo_info.get("is_restricted") else "green"))
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="agy-token",
@@ -752,6 +797,11 @@ def main():
     p_status = subparsers.add_parser("status", help="Show token quota status and weekly refresh countdowns")
     p_status.add_argument("--models", action="store_true", help="Display all individual model quotas")
     p_status.add_argument("--force", action="store_true", help="Bypass local cache and query Google directly")
+
+    # ip
+    p_ip = subparsers.add_parser("ip", help="Display public exit IP, geolocation, and Antigravity compatibility")
+    p_ip.add_argument("--refresh", action="store_true", help="Bypass 60s cache and re-query live IP service")
+    p_ip.add_argument("--json", action="store_true", help="Output machine-readable JSON")
 
     # watch
     p_watch = subparsers.add_parser("watch", help="Live auto-updating dashboard")
@@ -817,6 +867,7 @@ def main():
 
     cmd_map = {
         "status": cmd_status,
+        "ip": cmd_ip,
         "watch": cmd_watch,
         "check": cmd_check,
         "sync": cmd_sync,

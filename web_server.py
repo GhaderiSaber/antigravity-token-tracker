@@ -26,13 +26,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
             all_quotas = quota.fetch_all_accounts_quota(force_refresh=False)
             analyzed = {e: lifecycle.analyze_account_lifecycle(q) for e, q in all_quotas.items()}
             rec = lifecycle.compute_switching_recommendation(analyzed)
-            from antigravity_tracker import failover
+            from antigravity_tracker import failover, geo
             failover_info = failover.get_failover_status(analyzed)
+            geo_info = geo.get_ip_geo(force_refresh=False)
 
             payload = {
                 "accounts": analyzed,
                 "recommendation": rec,
-                "failover": failover_info
+                "failover": failover_info,
+                "geo": geo_info
             }
 
             data = json.dumps(payload).encode("utf-8")
@@ -41,6 +43,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             self.wfile.write(data)
+
+        elif parsed.path == "/api/ip":
+            from antigravity_tracker import geo
+            query = urllib.parse.parse_qs(parsed.query)
+            force = query.get("refresh", ["false"])[0].lower() == "true"
+            geo_info = geo.get_ip_geo(force_refresh=force)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(json.dumps(geo_info).encode("utf-8"))
 
         elif parsed.path == "/api/switch-best":
             accounts.sync_from_antigravity()

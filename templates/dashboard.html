@@ -64,6 +64,39 @@
       gap: 12px;
       align-items: center;
     }
+    .ip-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--surface-border);
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .ip-badge:hover {
+      border-color: var(--accent);
+      color: var(--text-main);
+    }
+    .ip-safe {
+      border-color: rgba(52, 168, 83, 0.4);
+      color: #81c995;
+      background: rgba(52, 168, 83, 0.1);
+    }
+    .ip-restricted {
+      border-color: rgba(234, 67, 53, 0.6);
+      color: #f28b82;
+      background: rgba(234, 67, 53, 0.2);
+      animation: pulse-red 2s infinite;
+    }
+    @keyframes pulse-red {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(234, 67, 53, 0.4); }
+      50% { box-shadow: 0 0 0 6px rgba(234, 67, 53, 0); }
+    }
     button {
       background: var(--surface);
       border: 1px solid var(--surface-border);
@@ -228,6 +261,7 @@
         </div>
       </div>
       <div class="controls">
+        <div id="ipBadge" class="ip-badge" title="Click to view IP details">🌐 Checking IP...</div>
         <span id="lastUpdated">Checking...</span>
         <button onclick="loadData()">↻ Refresh</button>
         <button class="btn-switch" onclick="switchBest()">⚡ Auto-Switch to Best</button>
@@ -269,9 +303,37 @@
       const accounts = data.accounts || {};
       const rec = data.recommendation;
       const failover = data.failover;
+      const geo = data.geo;
+
+      // Update IP Geolocation Badge
+      const ipBadge = document.getElementById('ipBadge');
+      if (ipBadge && geo) {
+        const flag = geo.flag || '🌐';
+        const ip = geo.ip || 'Unknown';
+        const cc = geo.country_code || '';
+        const city = geo.city ? `${geo.city}, ` : '';
+        ipBadge.innerHTML = `${flag} <span>${ip}</span> <span style="opacity:0.7">(${city}${cc})</span>`;
+        ipBadge.className = 'ip-badge ' + (geo.is_restricted ? 'ip-restricted' : 'ip-safe');
+        ipBadge.onclick = () => window.open('https://ipwho.is', '_blank');
+        ipBadge.title = `Egress: ${ip} | ${geo.country_name || ''} (${geo.isp || geo.org || 'Direct'})\nClick to test IP`;
+      }
 
       const alertContainer = document.getElementById('alertContainer');
       let alertHtml = '';
+
+      // Restricted Region Warning Banner
+      if (geo && geo.is_restricted) {
+        alertHtml += `
+          <div class="alert-banner" style="background: rgba(234, 67, 53, 0.2); border-color: rgba(234, 67, 53, 0.6); color: #f28b82; margin-bottom: 20px;">
+            <span style="font-size: 24px;">⚠️</span>
+            <div>
+              <strong style="font-size: 15px;">RESTRICTED REGION DETECTED (${geo.country_name || geo.country_code}):</strong><br>
+              Your public egress IP (<strong>${geo.ip}</strong>) is located in a region restricted by Google CloudCode & Antigravity APIs.<br>
+              <span style="color:#f0f3f6;">Please connect your VPN proxy immediately to prevent Antigravity session termination.</span>
+            </div>
+          </div>
+        `;
+      }
 
       if (failover && failover.backup_candidate_email) {
         if (failover.is_active_exhausted) {

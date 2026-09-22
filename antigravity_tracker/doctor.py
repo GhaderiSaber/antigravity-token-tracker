@@ -10,6 +10,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from . import accounts
 from . import auth
 from . import switcher
+from . import geo
 
 ACCOUNTS_FILE = os.path.expanduser("~/.config/antigravity-token-tracker/accounts.json")
 
@@ -123,6 +124,40 @@ def check_system_environment() -> List[Dict[str, Any]]:
             "component": "Web Dashboard Server",
             "status": "WARN",
             "details": "Port 8765 not listening (will launch automatically when requested)"
+        })
+
+    # 6. Egress IP & Geolocation
+    try:
+        geo_info = geo.get_ip_geo(force_refresh=False)
+        ip = geo_info.get("ip", "Unknown")
+        flag = geo_info.get("flag", "🌐")
+        country = geo_info.get("country_name", "Unknown")
+        city = geo_info.get("city", "")
+        loc_str = f"{flag} {city}, {country}" if city else f"{flag} {country}"
+
+        if geo_info.get("is_restricted"):
+            results.append({
+                "component": "Egress IP & Geolocation",
+                "status": "FAIL",
+                "details": f"{loc_str} ({ip}) - RESTRICTED REGION! Google Antigravity blocked. VPN required."
+            })
+        elif ip == "Unknown":
+            results.append({
+                "component": "Egress IP & Geolocation",
+                "status": "WARN",
+                "details": "Could not detect external IP (offline or network timeout)"
+            })
+        else:
+            results.append({
+                "component": "Egress IP & Geolocation",
+                "status": "PASS",
+                "details": f"{loc_str} ({ip}) - Compatible with Google Antigravity"
+            })
+    except Exception as e:
+        results.append({
+            "component": "Egress IP & Geolocation",
+            "status": "WARN",
+            "details": f"Geo lookup failed: {e}"
         })
 
     return results

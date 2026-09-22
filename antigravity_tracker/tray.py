@@ -18,9 +18,10 @@ try:
     from . import switcher
     from . import failover
     from . import notifier
+    from . import geo
 except (ImportError, ValueError):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from antigravity_tracker import accounts, quota, lifecycle, switcher, failover, notifier
+    from antigravity_tracker import accounts, quota, lifecycle, switcher, failover, notifier, geo
 
 ICON_CACHE_DIR = os.path.expanduser("~/.config/antigravity-token-tracker/icons")
 
@@ -163,25 +164,41 @@ class TrayApplet:
         self.menu_object = None
         self.current_icon_name = "quota_100"
         self.analyzed_quotas: Dict[str, Dict[str, Any]] = {}
+        self.geo_info: Dict[str, Any] = {}
+        self.last_is_restricted = False
         self.menu_action_map: Dict[int, Any] = {}
 
     def get_active_summary(self) -> str:
         """Returns brief summary for tooltip."""
+        geo_str = geo.format_ip_summary(self.geo_info) if self.geo_info else ""
+        geo_part = f" | {geo_str}" if geo_str else ""
+        if self.geo_info.get("is_restricted"):
+            geo_part = f" | ⚠️ RESTRICTED REGION ({self.geo_info.get('country_code', '')})"
+
         active_pair = failover.get_active_account(self.analyzed_quotas)
         if not active_pair:
-            return "No active Antigravity session detected"
+            return f"No active Antigravity session{geo_part}"
 
         email, q = active_pair
         pct, is_exh = failover.get_account_primary_quota(q)
         status_str = "EXHAUSTED" if is_exh else f"{pct:.1f}% remaining"
-        return f"{email}: {status_str}"
+        return f"{email}: {status_str}{geo_part}"
 
     def refresh_data(self, force: bool = False):
-        """Fetches latest quotas and refreshes the tray icon."""
+        """Fetches latest quotas and refreshes the tray icon and IP info."""
         try:
             accounts.sync_from_antigravity()
             all_q = quota.fetch_all_accounts_quota(force_refresh=force)
             self.analyzed_quotas = {e: lifecycle.analyze_account_lifecycle(q) for e, q in all_q.items()}
+            self.geo_info = geo.get_ip_geo(force_refresh=force)
+
+            if self.geo_info.get("is_restricted") and not self.last_is_restricted:
+                notifier.send_desktop_notification(
+                    "⚠️ Restricted IP / VPN Disconnected!",
+                    f"Egress country is {self.geo_info.get('country_name', 'Unknown')} ({self.geo_info.get('country_code', '')}).\nAntigravity is blocked in this region!",
+                    urgency="critical"
+                )
+            self.last_is_restricted = bool(self.geo_info.get("is_restricted"))
 
             active_pair = failover.get_active_account(self.analyzed_quotas)
             if active_pair:
@@ -246,6 +263,41 @@ class TrayApplet:
             dbus.Array([], signature="v")
         ), signature="(ia{sv}av)"))
         item_id += 1
+
+        # IP & Geolocation Entry
+        if self.geo_info:
+            if self.geo_info.get("is_restricted"):
+                warn_label = f"⚠️ RESTRICTED: {self.geo_info.get('flag', '')} {self.geo_info.get('country_name', 'Unknown')} (VPN Required!)"
+                children.append(dbus.Struct((
+                    dbus.Int32(item_id),
+                    dbus.Dictionary({"label": dbus.String(warn_label), "enabled": dbus.Boolean(True)}, signature="sv"),
+                    dbus.Array([], signature="v")
+                ), signature="(ia{sv}av)"))
+                self.menu_action_map[item_id] = ("ip_info", None)
+                item_id += 1
+
+            ip_val = self.geo_info.get("ip", "Unknown")
+            flag = self.geo_info.get("flag", "🌐")
+            country_name = self.geo_info.get("country_name", "Unknown")
+            city = self.geo_info.get("city", "")
+            loc = f"{city}, {country_name}" if city else country_name
+            ip_label = f"🌐 IP: {ip_val} ({flag} {loc})"
+
+            children.append(dbus.Struct((
+                dbus.Int32(item_id),
+                dbus.Dictionary({"label": dbus.String(ip_label), "enabled": dbus.Boolean(True)}, signature="sv"),
+                dbus.Array([], signature="v")
+            ), signature="(ia{sv}av)"))
+            self.menu_action_map[item_id] = ("ip_info", None)
+            item_id += 1
+
+            # Separator after IP
+            children.append(dbus.Struct((
+                dbus.Int32(item_id),
+                dbus.Dictionary({"type": dbus.String("separator")}, signature="sv"),
+                dbus.Array([], signature="v")
+            ), signature="(ia{sv}av)"))
+            item_id += 1
 
         # 2. Switch Account Options
         registered = accounts.list_accounts()
@@ -376,6 +428,9 @@ class TrayApplet:
             except Exception:
                 pass
             webbrowser.open("http://localhost:8765")
+
+        elif action == "ip_info":
+            webbrowser.open("https://ipwho.is")
 
         elif action == "refresh":
             threading.Thread(target=lambda: self.refresh_data(force=True), daemon=True).start()
