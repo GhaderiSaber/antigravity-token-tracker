@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Antigravity Token & Quota Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0d0f12;
+      --surface: #15181e;
+      --surface-border: #262a34;
+      --text-main: #f0f3f6;
+      --text-muted: #8b949e;
+      --accent: #4285f4;
+      --green: #34a853;
+      --yellow: #fbbc04;
+      --red: #ea4335;
+      --red-bg: rgba(234, 67, 53, 0.12);
+      --green-bg: rgba(52, 168, 83, 0.12);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg);
+      color: var(--text-main);
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      padding: 32px 24px;
+      min-height: 100vh;
+    }
+    .container {
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 32px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--surface-border);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .logo-badge {
+      width: 40px;
+      height: 40px;
+      background: linear-gradient(135deg, #4285f4, #9b51e0);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      box-shadow: 0 4px 12px rgba(66, 133, 244, 0.3);
+    }
+    h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.5px; }
+    .subtitle { font-size: 13px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+    .controls {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+    button {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      color: var(--text-main);
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    button:hover { background: #1e222a; border-color: var(--accent); }
+    .btn-switch {
+      background: linear-gradient(135deg, #4285f4, #9b51e0);
+      color: white;
+      border: none;
+      font-weight: 600;
+      font-size: 13px;
+      padding: 8px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.1s;
+    }
+    .btn-switch:hover {
+      opacity: 0.9;
+      transform: translateY(-1px);
+    }
+    .account-card {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 24px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+    }
+    .account-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    .user-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .email { font-size: 17px; font-weight: 700; }
+    .tier-badge {
+      padding: 4px 10px;
+      background: rgba(66, 133, 244, 0.15);
+      border: 1px solid rgba(66, 133, 244, 0.3);
+      color: #8ab4f8;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .active-badge {
+      padding: 4px 10px;
+      background: var(--green-bg);
+      border: 1px solid rgba(52, 168, 83, 0.3);
+      color: #81c995;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .active-dot { width: 6px; height: 6px; background: #34a853; border-radius: 50%; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 16px;
+    }
+    .group-box {
+      background: #111317;
+      border: 1px solid var(--surface-border);
+      border-radius: 12px;
+      padding: 20px;
+    }
+    .group-title {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .meter-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+    .progress-bar-bg {
+      width: 100%;
+      height: 10px;
+      background: #20242c;
+      border-radius: 5px;
+      overflow: hidden;
+      margin-bottom: 12px;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      border-radius: 5px;
+      transition: width 0.5s ease;
+    }
+    .countdown-box {
+      background: #171b22;
+      border: 1px solid #232731;
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin-top: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+    }
+    .countdown-val {
+      color: #8ab4f8;
+      font-weight: 700;
+    }
+    .status-pill {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .status-exhausted { background: var(--red-bg); color: var(--red); border: 1px solid var(--red); }
+    .status-healthy { background: var(--green-bg); color: var(--green); border: 1px solid var(--green); }
+    .status-low { background: rgba(251, 188, 4, 0.15); color: var(--yellow); border: 1px solid var(--yellow); }
+    .alert-banner {
+      background: rgba(251, 188, 4, 0.1);
+      border: 1px solid rgba(251, 188, 4, 0.3);
+      color: #fdd663;
+      padding: 16px 20px;
+      border-radius: 12px;
+      margin-bottom: 24px;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    #lastUpdated { font-size: 12px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="brand">
+        <div class="logo-badge">⚡</div>
+        <div>
+          <h1>Antigravity Token Tracker</h1>
+          <div class="subtitle">Weekly Account Token & Quota Lifecycle Monitor</div>
+        </div>
+      </div>
+      <div class="controls">
+        <span id="lastUpdated">Checking...</span>
+        <button onclick="loadData()">↻ Refresh</button>
+      </div>
+    </header>
+
+    <div id="alertContainer"></div>
+    <div id="accountsContainer">Loading account quota status...</div>
+  </div>
+
+  <script>
+    function getStatusBadge(pct) {
+      if (pct <= 1.0) return '<span class="status-pill status-exhausted">Finished / Exhausted</span>';
+      if (pct <= 10.0) return '<span class="status-pill status-exhausted">Critical</span>';
+      if (pct <= 25.0) return '<span class="status-pill status-low">Low</span>';
+      return '<span class="status-pill status-healthy">Healthy</span>';
+    }
+
+    function getBarColor(pct) {
+      if (pct <= 1.0) return '#ea4335';
+      if (pct <= 10.0) return '#ea4335';
+      if (pct <= 25.0) return '#fbbc04';
+      if (pct <= 50.0) return '#4285f4';
+      return '#34a853';
+    }
+
+    async function loadData() {
+      try {
+        const resp = await fetch('/api/quota');
+        const data = await resp.json();
+        renderDashboard(data);
+      } catch (err) {
+        document.getElementById('accountsContainer').innerHTML = `<div style="color:var(--red); padding:20px;">Failed to fetch quota data: ${err.message}</div>`;
+      }
+    }
+
+    function renderDashboard(data) {
+      document.getElementById('lastUpdated').textContent = `Updated: ${new Date().toLocaleTimeString()}`;
+      const accounts = data.accounts || {};
+      const rec = data.recommendation;
+
+      const alertContainer = document.getElementById('alertContainer');
+      if (rec) {
+        alertContainer.innerHTML = `<div class="alert-banner"><span>💡</span> <div>${rec}</div></div>`;
+      } else {
+        alertContainer.innerHTML = '';
+      }
+
+      let html = '';
+      for (const [email, acc] of Object.entries(accounts)) {
+        const isCurrentApp = Boolean(acc.is_current_desktop_session);
+        let activeBadge = '';
+        if (acc.is_current_desktop_session && acc.is_current_ide_session) {
+          activeBadge = '<div class="active-badge"><div class="active-dot"></div> Active (App + IDE)</div>';
+        } else if (acc.is_current_desktop_session) {
+          activeBadge = '<div class="active-badge"><div class="active-dot"></div> Active in Antigravity App</div>';
+        } else if (acc.is_current_ide_session) {
+          activeBadge = '<div class="active-badge"><div class="active-dot"></div> Active in IDE</div>';
+        }
+
+        html += `
+          <div class="account-card">
+            <div class="account-header">
+              <div class="user-info">
+                <div class="email">${acc.email}</div>
+                <div class="tier-badge">${acc.tier || 'Standard'}</div>
+                ${activeBadge}
+              </div>
+              ${!isCurrentApp ? `
+                <button class="btn-switch" onclick="switchAccount('${acc.email}')">⚡ Switch to this Account</button>
+              ` : ''}
+            </div>
+
+            <div class="grid">
+        `;
+
+        for (const g of (acc.groups || [])) {
+          const w = g.weekly;
+          const f = g.fiveHour;
+          const wPct = w ? w.remainingPercent : 0;
+          const fPct = f ? f.remainingPercent : 0;
+
+          html += `
+            <div class="group-box">
+              <div class="group-title">
+                <span>${g.displayName}</span>
+                ${w ? getStatusBadge(wPct) : ''}
+              </div>
+
+              <div class="meter-label">
+                <span>Weekly Limit Remaining</span>
+                <strong>${wPct.toFixed(1)}%</strong>
+              </div>
+              <div class="progress-bar-bg">
+                <div class="progress-bar-fill" style="width: ${wPct}%; background-color: ${getBarColor(wPct)};"></div>
+              </div>
+
+              ${w ? `
+              <div class="countdown-box">
+                <span>Weekly Refresh:</span>
+                <span class="countdown-val">in ${w.countdown}</span>
+              </div>
+              ` : ''}
+
+              <div style="margin-top: 16px;">
+                <div class="meter-label">
+                  <span>5-Hour Rolling Limit</span>
+                  <strong>${fPct.toFixed(1)}%</strong>
+                </div>
+                <div class="progress-bar-bg">
+                  <div class="progress-bar-fill" style="width: ${fPct}%; background-color: ${getBarColor(fPct)};"></div>
+                </div>
+              </div>
+            </div>
+          `;
+        }
+
+        html += `
+            </div>
+          </div>
+        `;
+      }
+
+      document.getElementById('accountsContainer').innerHTML = html;
+    }
+
+    async function switchAccount(email) {
+      if (!confirm(`Switch active session to ${email}? Antigravity will restart.`)) return;
+      const alertContainer = document.getElementById('alertContainer');
+      alertContainer.innerHTML = `<div class="alert-banner" style="background:#1a2333; border-color:#4285f4;"><span>⏳</span> <div>Switching session to ${email}... Restarting Antigravity...</div></div>`;
+      try {
+        const resp = await fetch(`/api/switch?email=${encodeURIComponent(email)}`);
+        const res = await resp.json();
+        if (res.success) {
+          alert(`✓ ${res.message || 'Successfully switched!'}`);
+          loadData();
+        } else {
+          alert(`Switch failed: ${res.message || res.error}`);
+          loadData();
+        }
+      } catch (err) {
+        alert(`Error: ${err.message}`);
+      }
+    }
+
+    loadData();
+    setInterval(loadData, 30000);
+  </script>
+</body>
+</html>
