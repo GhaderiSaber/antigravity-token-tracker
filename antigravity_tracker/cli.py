@@ -505,12 +505,47 @@ def cmd_daemon(args):
     threshold = getattr(args, "threshold", 1.0)
     cooldown = getattr(args, "cooldown", 120)
     no_restart = getattr(args, "no_restart", False)
+    use_tray = getattr(args, "tray", False)
 
     console.print(f"[bold cyan]Antigravity Token Lifecycle Daemon started.[/bold cyan] Polling every {interval}s...")
     if auto_switch:
         console.print(f"[bold green]⚡ Auto-Failover: ENABLED[/bold green] (triggers when active quota <= {threshold}%, cooldown: {cooldown}s)")
     else:
         console.print("[dim]Auto-failover is disabled (monitoring mode). Use --auto-switch to enable automated account switching.[/dim]")
+
+    if use_tray:
+        console.print("[bold green]🖥️ Top-Bar System Tray Applet ACTIVE[/bold green]")
+        from . import tray
+        applet = tray.TrayApplet(update_interval=interval)
+
+        def daemon_cycle():
+            try:
+                accounts.sync_from_antigravity()
+                all_quotas = quota.fetch_all_accounts_quota(force_refresh=True)
+                analyzed = {e: lifecycle.analyze_account_lifecycle(q) for e, q in all_quotas.items()}
+                lifecycle.log_lifecycle_snapshot(analyzed)
+                notifier.check_and_notify_lifecycle_events(analyzed)
+
+                if auto_switch:
+                    res = failover.evaluate_and_execute_failover(
+                        analyzed,
+                        threshold=threshold,
+                        restart=not no_restart,
+                        cooldown_seconds=cooldown
+                    )
+                    if res.get("triggered"):
+                        console.print(f"[bold green]⚡ Auto-Failover: {res.get('message')}[/bold green]")
+                    elif res.get("reason") in ("COOLDOWN", "ALL_ACCOUNTS_DEPLETED", "SWITCH_FAILED"):
+                        console.print(f"[dim]Failover notice: {res.get('message')}[/dim]")
+                applet.refresh_data(force=False)
+            except Exception as e:
+                console.print(f"[red]Daemon error during cycle: {e}[/red]")
+            return True
+
+        from gi.repository import GLib
+        GLib.timeout_add_seconds(interval, daemon_cycle)
+        applet.start()
+        return 0
 
     try:
         while True:
@@ -596,6 +631,15 @@ def cmd_web(args):
     return 0
 
 
+def cmd_tray(args):
+    from . import tray
+    interval = getattr(args, "interval", 60)
+    console.print(f"[bold cyan]Antigravity Top-Bar Tray Applet started.[/bold cyan] (Updating every {interval}s)")
+    console.print("[dim]Look for the lightning icon in your Ubuntu / Linux top bar. Press Ctrl+C to exit.[/dim]")
+    tray.run_tray(interval=interval)
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="agy-token",
@@ -640,10 +684,15 @@ def main():
     p_daemon.add_argument("--threshold", type=float, default=1.0, help="Quota percentage threshold to trigger auto-failover (default: 1.0%%)")
     p_daemon.add_argument("--cooldown", type=int, default=120, help="Minimum seconds between auto-failovers (default: 120)")
     p_daemon.add_argument("--no-restart", action="store_true", help="Swap session without restarting Antigravity")
+    p_daemon.add_argument("--tray", action="store_true", help="Launch top-bar system tray indicator alongside daemon")
 
     # web
     p_web = subparsers.add_parser("web", help="Start interactive browser dashboard")
     p_web.add_argument("--port", type=int, default=8765, help="Port to listen on (default: 8765)")
+
+    # tray
+    p_tray = subparsers.add_parser("tray", help="Start native Linux top-bar / system tray applet")
+    p_tray.add_argument("--interval", type=int, default=60, help="Polling interval in seconds (default: 60)")
 
     # switch
     p_switch = subparsers.add_parser("switch", help="Instantly switch active account session")
@@ -669,7 +718,8 @@ def main():
         "remove": cmd_remove,
         "daemon": cmd_daemon,
         "web": cmd_web,
-        "switch": cmd_switch
+        "switch": cmd_switch,
+        "tray": cmd_tray
     }
 
     func = cmd_map.get(args.command)

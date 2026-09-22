@@ -22,7 +22,12 @@ A standalone, multi-account lifecycle monitor and alerting utility for Google An
 - **Native Desktop Notifications (`notify-send`)**:
   - Pops up a system alert when your weekly tokens run out.
   - Pops up a system notification the moment your weekly tokens refresh back to 100%!
+- **🖥️ Linux Desktop Top-Bar / System Tray Applet**:
+  - Live StatusNotifierItem (SNI) indicator natively integrated into Ubuntu/GNOME's top panel.
+  - Dynamic colored quota progress ring and lightning badge.
+  - 1-click dropdown menu to hot-swap accounts, trigger auto-failover, and view live quota countdowns.
 - **Flexible Display Surfaces**:
+  - **Top-Bar Tray Indicator**: Always-visible top panel icon with instant switch menu.
   - **Rich Terminal Dashboard**: Beautiful colored progress bars, tables, and countdowns.
   - **Live Watch Mode**: Real-time auto-updating terminal monitor.
   - **Interactive Web UI**: Modern dark-mode browser dashboard at `http://localhost:8765`.
@@ -121,12 +126,22 @@ agy-token daemon --auto-switch
 agy-token daemon --auto-switch --threshold 2.0 --cooldown 180 --interval 120
 ```
 
-To enable auto-failover as a persistent Linux user service:
+To enable auto-failover and the top-bar tray as a persistent background service:
 ```bash
 systemctl --user enable --now antigravity-token-tracker.service
 ```
 
-### 5. Multi-Account Management
+### 5. Native Linux Top-Bar System Tray Applet
+Launch the top panel indicator directly:
+```bash
+agy-token tray
+```
+Features:
+- Live dynamic icon with color-coded quota gauge.
+- Click to view full account breakdown, switch accounts in 1-click, and access the web dashboard.
+- Starts automatically on desktop login via `~/.config/autostart/`.
+
+### 6. Multi-Account Management
 ```bash
 # Sync current active account from Antigravity IDE:
 agy-token sync
@@ -139,7 +154,7 @@ agy-token remove 1
 agy-token remove other@gmail.com
 ```
 
-### 6. Fast Account Switcher (Interactive & Typo-Proof)
+### 7. Fast Account Switcher (Interactive & Typo-Proof)
 ```bash
 # 1. Interactive Menu (Arrow keys ↑/↓ or number keys, Enter to confirm):
 agy-token switch
@@ -159,7 +174,7 @@ agy-token switch --auto
 agy-token switch 1 --no-restart
 ```
 
-### 7. Scriptable Check
+### 8. Scriptable Check
 ```bash
 # Fast check (exit code 1 if weekly quota exhausted, 0 if healthy):
 agy-token check

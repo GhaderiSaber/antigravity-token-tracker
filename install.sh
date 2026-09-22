@@ -59,17 +59,26 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=$TARGET_BIN daemon --interval 600
+# Zero-downtime auto-failover, top-bar indicator, and desktop alerts
+ExecStart=$TARGET_BIN daemon --interval 300 --auto-switch --tray
 Restart=on-failure
 RestartSec=30
 Environment=DISPLAY=:0
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$CURRENT_UID/bus
+Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=default.target
 EOF
 
 echo "✓ Created systemd service template: $USER_SERVICE_FILE"
+
+# 5b. Install autostart desktop entry for top-bar tray
+mkdir -p "$HOME/.config/autostart"
+if [ -f "$SCRIPT_DIR/antigravity-token-tracker-tray.desktop" ]; then
+    cp "$SCRIPT_DIR/antigravity-token-tracker-tray.desktop" "$HOME/.config/autostart/"
+    echo "✓ Installed desktop autostart entry in ~/.config/autostart/"
+fi
 
 # 6. Initial Account Discovery
 echo ""
@@ -84,10 +93,11 @@ echo ""
 echo "Quick Commands:"
 echo "  • agy-token status       View current token usage and countdowns"
 echo "  • agy-token switch       Interactively choose and switch accounts"
+echo "  • agy-token tray         Launch top-bar system tray indicator"
 echo "  • agy-token web          Launch the browser dashboard (http://localhost:8765)"
 echo "  • agy-token watch        Live terminal monitor"
 echo ""
-echo "Optional - Enable automatic background notifications:"
+echo "Optional - Enable automatic background notifications & top-bar tray:"
 echo "  systemctl --user daemon-reload"
 echo "  systemctl --user enable --now antigravity-token-tracker.service"
 echo ""

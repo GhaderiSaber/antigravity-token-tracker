@@ -4,12 +4,13 @@ After=network.target
 
 [Service]
 Type=simple
-# Enable --auto-switch for zero-downtime automatic account failover when quota is exhausted
-ExecStart=%h/.local/bin/agy-token daemon --interval 300 --auto-switch
+# Zero-downtime auto-failover, top-bar indicator, and desktop alerts
+ExecStart=%h/.local/bin/agy-token daemon --interval 300 --auto-switch --tray
 Restart=on-failure
 RestartSec=30
 Environment=DISPLAY=:0
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%U/bus
+Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=default.target
