@@ -91,6 +91,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({"success": success, "message": msg}).encode("utf-8"))
 
+        elif parsed.path == "/api/doctor":
+            from antigravity_tracker import doctor
+            query = urllib.parse.parse_qs(parsed.query)
+            validate = query.get("validate", ["true"])[0].lower() == "true"
+            diag = doctor.run_full_diagnostic(validate_remote=validate)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(json.dumps(diag).encode("utf-8"))
+
         else:
             self.send_error(404, "Not Found")
 

@@ -647,6 +647,100 @@ def cmd_tray(args):
     return 0
 
 
+def cmd_doctor(args):
+    from . import doctor
+
+    console.print("\n[bold cyan]═══════════════════════════════════════════════════════════════════════════════[/bold cyan]")
+    console.print("[bold white]            🩺 ANTIGRAVITY ACCOUNT HEALTH & TOKEN DOCTOR                     [/bold white]")
+    console.print("[bold cyan]═══════════════════════════════════════════════════════════════════════════════[/bold cyan]\n")
+
+    if getattr(args, "fix", False):
+        console.print("[yellow]Running auto-repairs...[/yellow]")
+        actions = doctor.run_auto_repair()
+        if actions:
+            for act in actions:
+                console.print(f"  [green]✓ {act}[/green]")
+        else:
+            console.print("  [dim]No repairs needed.[/dim]")
+        console.print()
+
+    console.print("[dim]Auditing system services, processes, and accounts...[/dim]\n")
+    validate_remote = not getattr(args, "no_network", False)
+    diag = doctor.run_full_diagnostic(validate_remote=validate_remote)
+
+    # 1. System & Environment Table
+    t_sys = Table(title="1. System & Service Infrastructure", border_style="cyan", show_lines=True)
+    t_sys.add_column("Component", style="bold white", width=28)
+    t_sys.add_column("Status", width=12, justify="center")
+    t_sys.add_column("Diagnostic Details", style="dim")
+
+    for c in diag["system_checks"]:
+        badge = "[bold green]PASS[/bold green]" if c["status"] == "PASS" else f"[bold yellow]{c['status']}[/bold yellow]"
+        t_sys.add_row(c["component"], badge, c["details"])
+    console.print(t_sys)
+    console.print()
+
+    # 2. Antigravity Desktop Runtime Table
+    t_app = Table(title="2. Antigravity Desktop Runtime & Keyring Sync", border_style="cyan", show_lines=True)
+    t_app.add_column("Component", style="bold white", width=28)
+    t_app.add_column("Status", width=12, justify="center")
+    t_app.add_column("Diagnostic Details", style="dim")
+
+    for c in diag["app_checks"]:
+        badge = "[bold green]PASS[/bold green]" if c["status"] == "PASS" else (f"[bold yellow]{c['status']}[/bold yellow]" if c["status"] != "INFO" else "[bold blue]INFO[/bold blue]")
+        t_app.add_row(c["component"], badge, c["details"])
+    console.print(t_app)
+    console.print()
+
+    # 3. Per-Account Health Table
+    t_acc = Table(title="3. Registered Accounts & 1-Click Switch Readiness", border_style="cyan", show_lines=True)
+    t_acc.add_column("Account Email", style="bold cyan", width=28)
+    t_acc.add_column("OAuth Status", width=14, justify="center")
+    t_acc.add_column("Keyring Token", width=14, justify="center")
+    t_acc.add_column("1-Click Switch", width=16, justify="center")
+    t_acc.add_column("Action / Recommendation")
+
+    for acc in diag["account_checks"]:
+        oauth_st = acc["oauth_status"]
+        if oauth_st == "VALID":
+            o_badge = "[green]VALID[/green]"
+        elif oauth_st == "REVOKED":
+            o_badge = "[bold red]REVOKED[/bold red]"
+        elif oauth_st == "NO_REFRESH_TOKEN":
+            o_badge = "[dim]COOKIES ONLY[/dim]"
+        else:
+            o_badge = f"[yellow]{oauth_st}[/yellow]"
+
+        keyring_badge = "[green]✓ Saved[/green]" if acc["has_keyring_snapshot"] else "[yellow]Missing[/yellow]"
+
+        readiness = acc["switch_readiness"]
+        if readiness == "READY":
+            r_badge = "[bold green]● READY[/bold green]"
+        elif readiness == "PARTIAL":
+            r_badge = "[bold yellow]▲ PARTIAL[/bold yellow]"
+        else:
+            r_badge = "[bold red]✖ NEEDS LOGIN[/bold red]"
+
+        t_acc.add_row(
+            acc["email"],
+            o_badge,
+            keyring_badge,
+            r_badge,
+            acc["recommendation"]
+        )
+
+    console.print(t_acc)
+    console.print()
+
+    # Summary
+    if diag["overall_health"] == "HEALTHY":
+        console.print("[bold green]✓ Antigravity environment is fully healthy and operational.[/bold green]\n")
+    else:
+        console.print(f"[bold yellow]⚠️ System Status: {diag['overall_health']}[/bold yellow] - Run `agy-token doctor --fix` or see recommendations above.\n")
+
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="agy-token",
@@ -707,6 +801,11 @@ def main():
     p_switch.add_argument("--auto", action="store_true", help="Auto-switch to account with highest available quota without prompting")
     p_switch.add_argument("--no-restart", action="store_true", help="Swap session without restarting Antigravity")
 
+    # doctor
+    p_doctor = subparsers.add_parser("doctor", help="Audit account tokens, system keyring, services, and 1-click switch readiness")
+    p_doctor.add_argument("--fix", action="store_true", help="Automatically repair file permissions, refresh stale tokens, and restart services")
+    p_doctor.add_argument("--no-network", action="store_true", help="Skip remote Google OAuth token validation")
+
     args = parser.parse_args()
 
     # Default to status if no command given
@@ -726,7 +825,8 @@ def main():
         "daemon": cmd_daemon,
         "web": cmd_web,
         "switch": cmd_switch,
-        "tray": cmd_tray
+        "tray": cmd_tray,
+        "doctor": cmd_doctor
     }
 
     func = cmd_map.get(args.command)

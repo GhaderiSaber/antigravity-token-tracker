@@ -183,6 +183,19 @@ agy-token check
 agy-token check --json
 ```
 
+### 9. Account Health & Token Doctor
+Audit your Antigravity environment, system keyring, background daemon, and OAuth token validity across all accounts:
+```bash
+# Run full read-only diagnostic:
+agy-token doctor
+
+# Run diagnostics with safe auto-repairs (refreshes tokens, fixes permissions, restarts dead services):
+agy-token doctor --fix
+
+# Fast offline check without pinging Google endpoints:
+agy-token doctor --no-network
+```
+
 ---
 
 ## 🔄 1-Click Account Switching (Solution 2)
