@@ -198,19 +198,53 @@ def ensure_valid_token(account: Dict[str, Any]) -> Tuple[Optional[str], Dict[str
     return None, account
 
 
+def get_desktop_keyring_token() -> Tuple[Optional[str], Optional[Dict[str, Any]], Optional[str]]:
+    """Reads the active OAuth secret from Linux Keyring (service='gemini', username='antigravity').
+    Returns (email, parsed_json_dict, raw_json_str)."""
+    try:
+        import dbus
+        bus = dbus.SessionBus()
+        service = bus.get_object('org.freedesktop.secrets', '/org/freedesktop/secrets')
+        svc_iface = dbus.Interface(service, 'org.freedesktop.Secret.Service')
+        session_path = svc_iface.OpenSession('plain', '')[1]
+        unlocked, _ = svc_iface.SearchItems({'service': 'gemini', 'username': 'antigravity'})
+        if not unlocked:
+            return None, None, None
+        item = bus.get_object('org.freedesktop.secrets', unlocked[0])
+        secret = item.GetSecret(session_path, dbus_interface='org.freedesktop.Secret.Item')
+        raw_val = bytes(secret[2]).decode('utf-8', errors='replace')
+        data = json.loads(raw_val)
+
+        email = ""
+        id_tok = data.get("id_token", "")
+        if id_tok:
+            parts = id_tok.split(".")
+            if len(parts) >= 2:
+                import base64
+                payload = parts[1] + "=" * (-len(parts[1]) % 4)
+                claims = json.loads(base64.urlsafe_b64decode(payload.encode("ascii")))
+                email = claims.get("email", "").strip().lower()
+        return email, data, raw_val
+    except Exception:
+        return None, None, None
+
+
 def discover_antigravity_desktop_app() -> Optional[Dict[str, Any]]:
     """Detects active Antigravity Desktop App process and extracts port, csrf_token, and user info."""
     log_file = os.path.expanduser("~/.config/Antigravity/logs/main.log")
     storage_file = os.path.expanduser("~/.config/Antigravity/app_storage.json")
-    if not os.path.isfile(log_file) or not os.path.isfile(storage_file):
+    if not os.path.isfile(log_file):
         return None
 
     try:
-        with open(storage_file, "r", encoding="utf-8") as f:
-            app_storage = json.load(f)
-        email = app_storage.get("jetski.onboarding.lastLoginUsername", "").strip().lower()
-        if not email:
-            return None
+        fallback_email = ""
+        if os.path.isfile(storage_file):
+            try:
+                with open(storage_file, "r", encoding="utf-8") as f:
+                    app_storage = json.load(f)
+                fallback_email = app_storage.get("jetski.onboarding.lastLoginUsername", "").strip().lower()
+            except Exception:
+                pass
 
         with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
             lines = f.readlines()
@@ -243,9 +277,20 @@ def discover_antigravity_desktop_app() -> Optional[Dict[str, Any]]:
                 req = urllib.request.Request(url, data=b"{}", headers=headers)
                 with urllib.request.urlopen(req, context=ctx, timeout=1.5) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
-                    tier = data.get("userStatus", {}).get("userTier", {}).get("name", "Standard")
+                    user_status = data.get("userStatus", {})
+                    live_email = user_status.get("email", "").strip().lower()
+                    live_name = user_status.get("name", "")
+                    tier = user_status.get("userTier", {}).get("name", "Standard")
+
+                    # Fall back to keyring email if live_email not in response
+                    keyring_email, _, _ = get_desktop_keyring_token()
+                    final_email = live_email or keyring_email or fallback_email
+                    if not final_email:
+                        continue
+
                     return {
-                        "email": email,
+                        "email": final_email,
+                        "name": live_name,
                         "port": p,
                         "csrf_token": csrf_token,
                         "tier": tier,

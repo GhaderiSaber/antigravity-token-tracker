@@ -43,12 +43,76 @@ def get_account_session_dir(email: str) -> str:
     return path
 
 
+def get_keyring_secret() -> Tuple[Optional[str], Optional[Dict[str, Any]], Optional[str]]:
+    """Reads the active OAuth secret from Linux Keyring (service='gemini', username='antigravity').
+    Returns (email, parsed_dict, raw_json_str)."""
+    return auth.get_desktop_keyring_token()
+
+
+def set_keyring_secret(secret_json_str: str) -> bool:
+    """Sets the active OAuth secret in Linux Keyring (service='gemini', username='antigravity')."""
+    try:
+        import dbus
+        bus = dbus.SessionBus()
+        service = bus.get_object('org.freedesktop.secrets', '/org/freedesktop/secrets')
+        svc_iface = dbus.Interface(service, 'org.freedesktop.Secret.Service')
+        session_path = svc_iface.OpenSession('plain', '')[1]
+
+        secret_struct = (
+            session_path,
+            dbus.Array([], signature='y'),
+            dbus.ByteArray(secret_json_str.encode('utf-8')),
+            'text/plain; charset=utf-8'
+        )
+
+        unlocked, _ = svc_iface.SearchItems({'service': 'gemini', 'username': 'antigravity'})
+        if unlocked:
+            item = bus.get_object('org.freedesktop.secrets', unlocked[0])
+            item.SetSecret(secret_struct, dbus_interface='org.freedesktop.Secret.Item')
+            return True
+        else:
+            default_col = svc_iface.ReadAlias('default')
+            col = bus.get_object('org.freedesktop.secrets', default_col)
+            col_iface = dbus.Interface(col, 'org.freedesktop.Secret.Collection')
+            properties = {
+                'org.freedesktop.Secret.Item.Label': dbus.String("Password for 'antigravity' on 'gemini'"),
+                'org.freedesktop.Secret.Item.Attributes': dbus.Dictionary({
+                    'service': 'gemini',
+                    'username': 'antigravity'
+                }, signature='ss')
+            }
+            col_iface.CreateItem(properties, secret_struct, True)
+            return True
+    except Exception as e:
+        print(f"[Switcher] Error setting keyring secret: {e}")
+        return False
+
+
+def clear_keyring_secret() -> bool:
+    """Clears/removes the antigravity secret from Linux Keyring so the user can log into a new account."""
+    try:
+        import dbus
+        bus = dbus.SessionBus()
+        service = bus.get_object('org.freedesktop.secrets', '/org/freedesktop/secrets')
+        svc_iface = dbus.Interface(service, 'org.freedesktop.Secret.Service')
+        unlocked, _ = svc_iface.SearchItems({'service': 'gemini', 'username': 'antigravity'})
+        if unlocked:
+            item = bus.get_object('org.freedesktop.secrets', unlocked[0])
+            item.Delete(dbus_interface='org.freedesktop.Secret.Item')
+            return True
+        return False
+    except Exception as e:
+        print(f"[Switcher] Error clearing keyring secret: {e}")
+        return False
+
+
 def snapshot_desktop_session(email: str) -> bool:
-    """Snapshots the active Antigravity Desktop App session files for the specified account."""
+    """Snapshots the active Antigravity Desktop App session files and keyring OAuth token for the specified account."""
     if not os.path.isdir(DESKTOP_CONFIG_DIR):
         return False
 
-    target_dir = os.path.join(get_account_session_dir(email), "desktop")
+    clean_email = email.strip().lower()
+    target_dir = os.path.join(get_account_session_dir(clean_email), "desktop")
     os.makedirs(target_dir, mode=0o700, exist_ok=True)
 
     copied_any = False
@@ -73,13 +137,38 @@ def snapshot_desktop_session(email: str) -> bool:
             except Exception as e:
                 print(f"[Switcher] Warning: could not copy directory {d}: {e}")
 
+    # Snapshot Linux Keyring OAuth token (the true desktop app credentials)
+    k_email, k_data, k_raw = get_keyring_secret()
+    if k_raw:
+        # Save if keyring email matches or is unlabelled
+        if not k_email or k_email == clean_email:
+            keyring_file = os.path.join(get_account_session_dir(clean_email), "keyring_token.json")
+            try:
+                with open(keyring_file, "w", encoding="utf-8") as fp:
+                    fp.write(k_raw)
+                copied_any = True
+
+                # Persist access & refresh tokens to accounts.json
+                if k_data and "token" in k_data:
+                    tok = k_data["token"]
+                    registered = accounts.load_accounts()
+                    if clean_email in registered:
+                        if tok.get("access_token"):
+                            registered[clean_email]["access_token"] = tok["access_token"]
+                        if tok.get("refresh_token"):
+                            registered[clean_email]["refresh_token"] = tok["refresh_token"]
+                        accounts.save_accounts(registered)
+            except Exception as e:
+                print(f"[Switcher] Warning: could not save keyring token: {e}")
+
     # Record snapshot metadata
-    meta_file = os.path.join(get_account_session_dir(email), "snapshot_meta.json")
+    meta_file = os.path.join(get_account_session_dir(clean_email), "snapshot_meta.json")
     with open(meta_file, "w", encoding="utf-8") as fp:
         json.dump({
-            "email": email,
+            "email": clean_email,
             "snapshotted_at": time.time(),
-            "has_desktop_session": copied_any
+            "has_desktop_session": copied_any,
+            "has_keyring_token": os.path.isfile(os.path.join(get_account_session_dir(clean_email), "keyring_token.json"))
         }, fp, indent=2)
 
     return copied_any
@@ -125,43 +214,83 @@ def snapshot_account(email: str) -> Dict[str, bool]:
 
 
 def restore_desktop_session(email: str) -> bool:
-    """Restores a snapshotted Antigravity Desktop App session into ~/.config/Antigravity."""
-    source_dir = os.path.join(get_account_session_dir(email), "desktop")
-    if not os.path.isdir(source_dir):
+    """Restores a snapshotted Antigravity Desktop App session and Keyring secret."""
+    clean_email = email.strip().lower()
+    source_dir = os.path.join(get_account_session_dir(clean_email), "desktop")
+    keyring_file = os.path.join(get_account_session_dir(clean_email), "keyring_token.json")
+
+    has_files = os.path.isdir(source_dir)
+    has_keyring = os.path.isfile(keyring_file)
+
+    if not has_files and not has_keyring:
         return False
 
-    os.makedirs(DESKTOP_CONFIG_DIR, mode=0o700, exist_ok=True)
+    if has_files:
+        os.makedirs(DESKTOP_CONFIG_DIR, mode=0o700, exist_ok=True)
+        for f in DESKTOP_FILES_TO_SAVE:
+            src = os.path.join(source_dir, f)
+            if os.path.isfile(src):
+                try:
+                    shutil.copy2(src, os.path.join(DESKTOP_CONFIG_DIR, f))
+                except Exception as e:
+                    print(f"[Switcher] Warning: could not restore file {f}: {e}")
 
-    for f in DESKTOP_FILES_TO_SAVE:
-        src = os.path.join(source_dir, f)
-        if os.path.isfile(src):
+        for d in DESKTOP_DIRS_TO_SAVE:
+            src = os.path.join(source_dir, d)
+            if os.path.isdir(src):
+                try:
+                    dest = os.path.join(DESKTOP_CONFIG_DIR, d)
+                    if os.path.exists(dest):
+                        shutil.rmtree(dest)
+                    shutil.copytree(src, dest)
+                except Exception as e:
+                    print(f"[Switcher] Warning: could not restore directory {d}: {e}")
+
+        # Ensure app_storage.json has correct username
+        storage_file = os.path.join(DESKTOP_CONFIG_DIR, "app_storage.json")
+        if os.path.isfile(storage_file):
             try:
-                shutil.copy2(src, os.path.join(DESKTOP_CONFIG_DIR, f))
-            except Exception as e:
-                print(f"[Switcher] Warning: could not restore file {f}: {e}")
+                with open(storage_file, "r", encoding="utf-8") as fp:
+                    data = json.load(fp)
+                data["jetski.onboarding.lastLoginUsername"] = clean_email
+                with open(storage_file, "w", encoding="utf-8") as fp:
+                    json.dump(data, fp, indent=2)
+            except Exception:
+                pass
 
-    for d in DESKTOP_DIRS_TO_SAVE:
-        src = os.path.join(source_dir, d)
-        if os.path.isdir(src):
-            try:
-                dest = os.path.join(DESKTOP_CONFIG_DIR, d)
-                if os.path.exists(dest):
-                    shutil.rmtree(dest)
-                shutil.copytree(src, dest)
-            except Exception as e:
-                print(f"[Switcher] Warning: could not restore directory {d}: {e}")
-
-    # Ensure app_storage.json has correct username
-    storage_file = os.path.join(DESKTOP_CONFIG_DIR, "app_storage.json")
-    if os.path.isfile(storage_file):
+    # Restore Linux Keyring secret
+    if has_keyring:
         try:
-            with open(storage_file, "r", encoding="utf-8") as fp:
-                data = json.load(fp)
-            data["jetski.onboarding.lastLoginUsername"] = email
-            with open(storage_file, "w", encoding="utf-8") as fp:
-                json.dump(data, fp, indent=2)
-        except Exception:
-            pass
+            with open(keyring_file, "r", encoding="utf-8") as fp:
+                k_raw = fp.read()
+            set_keyring_secret(k_raw)
+        except Exception as e:
+            print(f"[Switcher] Warning: could not restore keyring secret: {e}")
+    else:
+        # Check if account has refresh_token in accounts.json (e.g. imported from IDE)
+        reg = accounts.load_accounts()
+        acc = reg.get(clean_email, {})
+        if acc.get("refresh_token"):
+            token_obj = {
+                "token": {
+                    "access_token": acc.get("access_token", ""),
+                    "token_type": "Bearer",
+                    "refresh_token": acc.get("refresh_token", ""),
+                    "expiry": ""
+                },
+                "auth_method": "OAUTH",
+                "id_token": ""
+            }
+            k_raw = json.dumps(token_obj)
+            set_keyring_secret(k_raw)
+            try:
+                with open(keyring_file, "w", encoding="utf-8") as fp:
+                    fp.write(k_raw)
+            except Exception:
+                pass
+        else:
+            # Clear old account's keyring token so app doesn't load previous user
+            clear_keyring_secret()
 
     return True
 
@@ -274,15 +403,17 @@ def switch_to_account(target_email: str, restart: bool = True) -> Tuple[bool, st
     if current_email:
         snapshot_account(current_email)
 
-    # 2. Check if we have a saved desktop snapshot for the target account
+    # 2. Check available session snapshots for the target account
     target_session_dir = get_account_session_dir(target_clean)
     has_desktop_snap = os.path.isdir(os.path.join(target_session_dir, "desktop"))
+    has_keyring_snap = os.path.isfile(os.path.join(target_session_dir, "keyring_token.json"))
     has_ide_snap = os.path.isfile(os.path.join(target_session_dir, "ide_tokens.json"))
+    has_refresh_token = bool(registered.get(target_clean, {}).get("refresh_token"))
 
     was_running = is_antigravity_running()
 
     restored_desktop = False
-    if has_desktop_snap:
+    if has_desktop_snap or has_keyring_snap or has_refresh_token:
         restored_desktop = restore_desktop_session(target_clean)
 
     restored_ide = False
@@ -292,16 +423,18 @@ def switch_to_account(target_email: str, restart: bool = True) -> Tuple[bool, st
     # 3. Handle relaunch if requested and previously running
     if restart and was_running:
         restart_antigravity()
-        time.sleep(2.0)  # Brief grace period for app to re-initialize
+        time.sleep(2.5)  # Brief grace period for app to re-initialize
 
     # 4. Refresh registry status
     accounts.sync_from_antigravity()
 
-    if restored_desktop or restored_ide:
-        msg = f"✓ Switched active session to {target_clean}!"
-        if not has_desktop_snap and was_running:
-            msg += "\n(Note: Target account had no Desktop App snapshot yet. Please sign into Antigravity once to capture it)."
-        return True, msg
+    if has_keyring_snap or has_refresh_token or restored_ide:
+        return True, f"✓ Switched active session to {target_clean}!"
+    elif restored_desktop:
+        return True, (
+            f"✓ Prepared Antigravity session for {target_clean}.\n"
+            f"Please click 'Sign In' in Antigravity to authenticate. Once logged in, its token will be automatically captured for future 1-click switching!"
+        )
     else:
         return False, (
             f"No saved session snapshot found for {target_clean}.\n"
