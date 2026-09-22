@@ -97,9 +97,42 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         return self.do_GET()
 
+    def do_HEAD(self):
+        return self.do_GET()
+
     def log_message(self, format, *args):
         # Silence default request spam in console
         return
+
+
+_background_server = None
+_background_thread = None
+
+
+def start_background_server(port: int = 8765):
+    """Starts the web dashboard in a background daemon thread if not already running."""
+    global _background_server, _background_thread
+    if _background_server is not None:
+        return _background_server
+
+    import socket
+    # Check if port is already listening
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        if s.connect_ex(("127.0.0.1", port)) == 0:
+            # Already running
+            return None
+
+    try:
+        import threading
+        server_address = ("127.0.0.1", port)
+        _background_server = HTTPServer(server_address, DashboardHandler)
+        _background_thread = threading.Thread(target=_background_server.serve_forever, daemon=True)
+        _background_thread.start()
+        print(f"[Web] Dashboard active at http://localhost:{port}/")
+        return _background_server
+    except Exception as e:
+        print(f"[Web] Notice: Could not bind dashboard port {port}: {e}")
+        return None
 
 
 def start_server(port: int = 8765):

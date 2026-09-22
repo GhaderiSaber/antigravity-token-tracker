@@ -513,6 +513,13 @@ def cmd_daemon(args):
     else:
         console.print("[dim]Auto-failover is disabled (monitoring mode). Use --auto-switch to enable automated account switching.[/dim]")
 
+    # Start background web dashboard
+    try:
+        import web_server
+        web_server.start_background_server(port=8765)
+    except Exception:
+        pass
+
     if use_tray:
         console.print("[bold green]🖥️ Top-Bar System Tray Applet ACTIVE[/bold green]")
         from . import tray

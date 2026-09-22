@@ -370,6 +370,11 @@ class TrayApplet:
             threading.Thread(target=do_switch, daemon=True).start()
 
         elif action == "web":
+            try:
+                import web_server
+                web_server.start_background_server(port=8765)
+            except Exception:
+                pass
             webbrowser.open("http://localhost:8765")
 
         elif action == "refresh":
@@ -382,6 +387,12 @@ class TrayApplet:
 
     def start(self):
         """Initializes and runs the D-Bus StatusNotifierItem service loop."""
+        try:
+            import web_server
+            web_server.start_background_server(port=8765)
+        except Exception:
+            pass
+
         dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
         self.session_bus = dbus.SessionBus()
 
