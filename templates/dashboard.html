@@ -93,6 +93,35 @@
       background: rgba(234, 67, 53, 0.2);
       animation: pulse-red 2s infinite;
     }
+    .shield-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      font-family: 'JetBrains Mono', monospace;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      border: 1px solid var(--surface-border);
+      background: rgba(255, 255, 255, 0.05);
+    }
+    .shield-badge:hover {
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+    .shield-active {
+      border-color: rgba(66, 133, 244, 0.5);
+      color: #8ab4f8;
+      background: rgba(66, 133, 244, 0.12);
+    }
+    .shield-disabled {
+      border-color: rgba(251, 188, 4, 0.4);
+      color: #fdd663;
+      background: rgba(251, 188, 4, 0.1);
+      opacity: 0.7;
+    }
     @keyframes pulse-red {
       0%, 100% { box-shadow: 0 0 0 0 rgba(234, 67, 53, 0.4); }
       50% { box-shadow: 0 0 0 6px rgba(234, 67, 53, 0); }
@@ -262,6 +291,7 @@
       </div>
       <div class="controls">
         <div id="ipBadge" class="ip-badge" title="Click to view IP details">🌐 Checking IP...</div>
+        <div id="shieldBadge" class="shield-badge" onclick="toggleShield()" title="Click to toggle IP Killswitch Shield">🛡️ Shield: Loading...</div>
         <span id="lastUpdated">Checking...</span>
         <button onclick="loadData()">↻ Refresh</button>
         <button class="btn-switch" onclick="switchBest()">⚡ Auto-Switch to Best</button>
@@ -316,6 +346,18 @@
         ipBadge.className = 'ip-badge ' + (geo.is_restricted ? 'ip-restricted' : 'ip-safe');
         ipBadge.onclick = () => window.open('https://ipwho.is', '_blank');
         ipBadge.title = `Egress: ${ip} | ${geo.country_name || ''} (${geo.isp || geo.org || 'Direct'})\nClick to test IP`;
+      }
+
+      // Update Shield Badge
+      const shieldBadge = document.getElementById('shieldBadge');
+      const shieldCfg = data.shield;
+      if (shieldBadge && shieldCfg) {
+        const isShieldOn = Boolean(shieldCfg.enabled);
+        shieldBadge.className = 'shield-badge ' + (isShieldOn ? 'shield-active' : 'shield-disabled');
+        shieldBadge.innerHTML = `🛡️ Shield: <span>${isShieldOn ? 'ACTIVE' : 'OFF'}</span>`;
+        shieldBadge.title = isShieldOn
+          ? 'IP Shield ACTIVE: Will automatically terminate Antigravity if VPN disconnects.\nClick to toggle.'
+          : 'IP Shield DISABLED.\nClick to toggle.';
       }
 
       const alertContainer = document.getElementById('alertContainer');
@@ -488,6 +530,16 @@
         }
       } catch (err) {
         alert(`Error: ${err.message}`);
+      }
+    }
+
+    async function toggleShield() {
+      try {
+        const resp = await fetch('/api/shield', { method: 'POST' });
+        const res = await resp.json();
+        await loadData();
+      } catch (err) {
+        alert('Failed to toggle shield: ' + err.message);
       }
     }
 

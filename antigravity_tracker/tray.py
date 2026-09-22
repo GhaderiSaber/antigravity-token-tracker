@@ -19,9 +19,10 @@ try:
     from . import failover
     from . import notifier
     from . import geo
+    from . import shield
 except (ImportError, ValueError):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from antigravity_tracker import accounts, quota, lifecycle, switcher, failover, notifier, geo
+    from antigravity_tracker import accounts, quota, lifecycle, switcher, failover, notifier, geo, shield
 
 ICON_CACHE_DIR = os.path.expanduser("~/.config/antigravity-token-tracker/icons")
 
@@ -192,13 +193,8 @@ class TrayApplet:
             self.analyzed_quotas = {e: lifecycle.analyze_account_lifecycle(q) for e, q in all_q.items()}
             self.geo_info = geo.get_ip_geo(force_refresh=force)
 
-            if self.geo_info.get("is_restricted") and not self.last_is_restricted:
-                notifier.send_desktop_notification(
-                    "⚠️ Restricted IP / VPN Disconnected!",
-                    f"Egress country is {self.geo_info.get('country_name', 'Unknown')} ({self.geo_info.get('country_code', '')}).\nAntigravity is blocked in this region!",
-                    urgency="critical"
-                )
-            self.last_is_restricted = bool(self.geo_info.get("is_restricted"))
+            # Enforce IP Killswitch Shield
+            shield.evaluate_and_enforce_shield(self.geo_info)
 
             active_pair = failover.get_active_account(self.analyzed_quotas)
             if active_pair:
@@ -291,7 +287,21 @@ class TrayApplet:
             self.menu_action_map[item_id] = ("ip_info", None)
             item_id += 1
 
-            # Separator after IP
+            # IP Shield / Killswitch toggle
+            shield_cfg = shield.load_shield_config()
+            is_shield_on = shield_cfg.get("enabled", True)
+            shield_icon = "🛡️" if is_shield_on else "⚪"
+            shield_state = "ACTIVE" if is_shield_on else "OFF"
+            shield_label = f"{shield_icon} IP Killswitch Shield: [{shield_state}] (Click to toggle)"
+            children.append(dbus.Struct((
+                dbus.Int32(item_id),
+                dbus.Dictionary({"label": dbus.String(shield_label), "enabled": dbus.Boolean(True)}, signature="sv"),
+                dbus.Array([], signature="v")
+            ), signature="(ia{sv}av)"))
+            self.menu_action_map[item_id] = ("toggle_shield", None)
+            item_id += 1
+
+            # Separator after IP & Shield
             children.append(dbus.Struct((
                 dbus.Int32(item_id),
                 dbus.Dictionary({"type": dbus.String("separator")}, signature="sv"),
@@ -431,6 +441,18 @@ class TrayApplet:
 
         elif action == "ip_info":
             webbrowser.open("https://ipwho.is")
+
+        elif action == "toggle_shield":
+            cfg = shield.load_shield_config()
+            new_state = not cfg.get("enabled", True)
+            shield.set_shield_enabled(new_state)
+            status_desc = "ACTIVATED (Auto-terminates Antigravity if VPN drops)" if new_state else "DISABLED"
+            notifier.send_desktop_notification(
+                "🛡️ IP Shield Protection",
+                f"IP Killswitch Shield is now {status_desc}.",
+                urgency="normal"
+            )
+            GLib.idle_add(lambda: self.refresh_data(force=False))
 
         elif action == "refresh":
             threading.Thread(target=lambda: self.refresh_data(force=True), daemon=True).start()

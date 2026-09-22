@@ -26,15 +26,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
             all_quotas = quota.fetch_all_accounts_quota(force_refresh=False)
             analyzed = {e: lifecycle.analyze_account_lifecycle(q) for e, q in all_quotas.items()}
             rec = lifecycle.compute_switching_recommendation(analyzed)
-            from antigravity_tracker import failover, geo
+            from antigravity_tracker import failover, geo, shield
             failover_info = failover.get_failover_status(analyzed)
             geo_info = geo.get_ip_geo(force_refresh=False)
+            shield_cfg = shield.load_shield_config()
 
             payload = {
                 "accounts": analyzed,
                 "recommendation": rec,
                 "failover": failover_info,
-                "geo": geo_info
+                "geo": geo_info,
+                "shield": shield_cfg
             }
 
             data = json.dumps(payload).encode("utf-8")
@@ -43,6 +45,42 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             self.wfile.write(data)
+
+        elif parsed.path == "/api/shield":
+            from antigravity_tracker import shield, geo
+            if self.command == "POST":
+                try:
+                    length = int(self.headers.get("Content-Length", 0))
+                    if length > 0:
+                        body = json.loads(self.rfile.read(length).decode("utf-8"))
+                        if "enabled" in body:
+                            shield.set_shield_enabled(body["enabled"])
+                        if "mode" in body or "allowed_countries" in body or "action" in body:
+                            cfg = shield.load_shield_config()
+                            if "mode" in body: cfg["mode"] = body["mode"]
+                            if "allowed_countries" in body: cfg["allowed_countries"] = body["allowed_countries"]
+                            if "action" in body: cfg["action"] = body["action"]
+                            shield.save_shield_config(cfg)
+                    else:
+                        cfg = shield.load_shield_config()
+                        shield.set_shield_enabled(not cfg.get("enabled", True))
+                except Exception:
+                    pass
+
+            cfg = shield.load_shield_config()
+            g = geo.get_ip_geo(force_refresh=False)
+            allowed, reason = shield.is_ip_allowed(g, cfg)
+            resp_payload = {
+                "config": cfg,
+                "allowed": allowed,
+                "reason": reason,
+                "geo": g
+            }
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(json.dumps(resp_payload).encode("utf-8"))
 
         elif parsed.path == "/api/ip":
             from antigravity_tracker import geo

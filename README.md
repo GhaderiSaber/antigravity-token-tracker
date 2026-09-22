@@ -30,6 +30,11 @@ A standalone, multi-account lifecycle monitor and alerting utility for Google An
   - Live public exit IP, ISO country code, flag emoji, and city displayed directly on the top-bar tray tooltip and menu.
   - **VPN Disconnect & Geo-Block Alerts**: Warns immediately if your IP falls into an Antigravity restricted region (`IR`, `RU`, `BY`, `KP`, `CU`, `SY`, `CN`).
   - Auditable via `agy-token ip`, `agy-token status`, web dashboard, and `agy-token doctor`.
+- **🛡️ Antigravity Geo-Shield & Emergency IP Killswitch**:
+  - **Instant Account Protection**: Automatically closes Antigravity and Google Language Server processes within < 50ms if your VPN drops or your IP switches to a restricted country.
+  - **Relaunch Guard**: Blocks Antigravity from connecting until a safe VPN egress is re-established.
+  - **1-Click Tray & Web Toggle**: Turn shield on/off with 1 click directly in the top-bar dropdown or web dashboard.
+  - **Custom Policy**: Supports restricted country blacklist or custom allowed country whitelist (`US,DE,GB,...`).
 - **Flexible Display Surfaces**:
   - **Top-Bar Tray Indicator**: Always-visible top panel icon with instant switch menu.
   - **Rich Terminal Dashboard**: Beautiful colored progress bars, tables, and countdowns.
@@ -211,6 +216,27 @@ agy-token ip --refresh
 
 # Machine-readable JSON output:
 agy-token ip --json
+```
+
+### 11. Antigravity Geo-Shield & Emergency IP Killswitch
+Protect your Google accounts from regional geoblocking and API bans if your VPN disconnects:
+```bash
+# View shield status, policy, and compliance check:
+agy-token shield status
+
+# Enable or disable the killswitch shield:
+agy-token shield on
+agy-token shield off
+
+# Switch between restricted countries and whitelist modes:
+agy-token shield mode restricted
+agy-token shield mode whitelist
+
+# Configure allowed countries for whitelist mode:
+agy-token shield allow US,DE,GB,NL,CA
+
+# Test emergency termination manually:
+agy-token shield trigger
 ```
 
 ---

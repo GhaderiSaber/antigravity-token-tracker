@@ -21,6 +21,7 @@ from . import notifier
 from . import auth
 from . import failover
 from . import geo
+from . import shield
 
 console = Console()
 
@@ -131,12 +132,19 @@ def cmd_status(args):
     else:
         ip_status_badge = "[bold green]✓ Safe Egress[/bold green]"
 
+    # Shield Status Badge
+    shield_cfg = shield.load_shield_config()
+    if shield_cfg.get("enabled", True):
+        shield_badge = "[bold green]🛡️ Shield: ACTIVE[/bold green]"
+    else:
+        shield_badge = "[dim]🛡️ Shield: OFF[/dim]"
+
     # Header
     console.print()
     console.print("[bold cyan]═══════════════════════════════════════════════════════════════════════════════[/bold cyan]")
     console.print("[bold white]            ⚡ ANTIGRAVITY TOKEN & WEEKLY QUOTA LIFECYCLE TRACKER             [/bold white]")
     console.print(f"[dim]                Current Local Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (UTC: {datetime.now(timezone.utc).strftime('%H:%M:%S')})[/dim]")
-    console.print(f"[dim]                🌐 Exit IP: [/dim][bold]{flag} {ip_str}[/bold] [dim]({loc})[/dim]  {ip_status_badge}")
+    console.print(f"[dim]                🌐 Exit IP: [/dim][bold]{flag} {ip_str}[/bold] [dim]({loc})[/dim]  {ip_status_badge}  {shield_badge}")
     console.print("[bold cyan]═══════════════════════════════════════════════════════════════════════════════[/bold cyan]")
     console.print()
 
@@ -548,6 +556,9 @@ def cmd_daemon(args):
                 lifecycle.log_lifecycle_snapshot(analyzed)
                 notifier.check_and_notify_lifecycle_events(analyzed)
 
+                # Enforce IP Killswitch Shield
+                shield.evaluate_and_enforce_shield()
+
                 if auto_switch:
                     res = failover.evaluate_and_execute_failover(
                         analyzed,
@@ -577,6 +588,9 @@ def cmd_daemon(args):
                 analyzed = {e: lifecycle.analyze_account_lifecycle(q) for e, q in all_quotas.items()}
                 lifecycle.log_lifecycle_snapshot(analyzed)
                 notifier.check_and_notify_lifecycle_events(analyzed)
+
+                # Enforce IP Killswitch Shield
+                shield.evaluate_and_enforce_shield()
 
                 if auto_switch:
                     res = failover.evaluate_and_execute_failover(
@@ -786,6 +800,89 @@ def cmd_ip(args):
     return 0
 
 
+def cmd_shield(args):
+    """Manages the Antigravity Geo-Shield and Emergency IP Killswitch."""
+    action = getattr(args, "shield_action", None) or "status"
+    cfg = shield.load_shield_config()
+
+    if action in ("on", "enable"):
+        shield.set_shield_enabled(True)
+        console.print("[bold green]✓ IP Killswitch Shield ENABLED.[/bold green]")
+        console.print("[dim]Antigravity processes will be automatically terminated if VPN drops or restricted IP is detected.[/dim]\n")
+        return 0
+
+    elif action in ("off", "disable"):
+        shield.set_shield_enabled(False)
+        console.print("[bold yellow]⚠️ IP Killswitch Shield DISABLED.[/bold yellow]\n")
+        return 0
+
+    elif action == "mode":
+        target_mode = getattr(args, "mode_val", None) or getattr(args, "extra_arg", None)
+        if target_mode not in ("restricted", "whitelist"):
+            console.print("[red]Invalid mode. Specify: `agy-token shield mode restricted` or `agy-token shield mode whitelist`.[/red]")
+            return 1
+        cfg["mode"] = target_mode
+        shield.save_shield_config(cfg)
+        console.print(f"[green]✓ Shield mode set to: [bold]{target_mode}[/bold][/green]\n")
+        return 0
+
+    elif action == "allow":
+        countries_str = getattr(args, "countries", None) or getattr(args, "extra_arg", None)
+        if not countries_str:
+            console.print("[red]Please specify country codes: `agy-token shield allow US,DE,GB`.[/red]")
+            return 1
+        countries = [c.strip().upper() for c in countries_str.split(",") if c.strip()]
+        cfg["allowed_countries"] = countries
+        shield.save_shield_config(cfg)
+        console.print(f"[green]✓ Allowed countries whitelist updated to: [bold]{', '.join(countries)}[/bold][/green]\n")
+        return 0
+
+    elif action == "action":
+        act_val = getattr(args, "action_val", None) or getattr(args, "extra_arg", None)
+        if act_val not in ("kill_process", "kill_network", "both"):
+            console.print("[red]Invalid action. Choose 'kill_process', 'kill_network', or 'both'.[/red]")
+            return 1
+        cfg["action"] = act_val
+        shield.save_shield_config(cfg)
+        console.print(f"[green]✓ Shield enforcement action set to: [bold]{act_val}[/bold][/green]\n")
+        return 0
+
+    elif action == "trigger":
+        console.print("[bold red]🚨 Manually triggering IP Killswitch emergency action...[/bold red]")
+        killed_cnt, pids = shield.kill_antigravity_processes(force=True)
+        console.print(f"[green]✓ Terminated {killed_cnt} Antigravity process(es) (PIDs: {pids}).[/green]\n")
+        return 0
+
+    # Default: Show Status Table
+    geo_info = geo.get_ip_geo(force_refresh=False)
+    allowed, reason = shield.is_ip_allowed(geo_info, cfg)
+
+    table = Table(title="🛡️ Antigravity Geo-Shield & Killswitch Configuration", box=None)
+    table.add_column("Property", style="bold cyan", ratio=1)
+    table.add_column("Value", ratio=2)
+
+    status_str = "[bold green]● ACTIVE (Protection ON)[/bold green]" if cfg.get("enabled", True) else "[bold red]○ DISABLED (Protection OFF)[/bold red]"
+    table.add_row("Shield Status", status_str)
+    table.add_row("Mode", cfg.get("mode", "restricted").title())
+    table.add_row("Enforcement Action", cfg.get("action", "kill_process"))
+    table.add_row("Allowed Whitelist", ", ".join(cfg.get("allowed_countries", [])))
+    table.add_row("Auto-Relaunch on Reconnect", "Yes" if cfg.get("auto_relaunch", False) else "No")
+
+    current_ip = geo_info.get("ip", "Unknown")
+    flag = geo_info.get("flag", "🌐")
+    cc = geo_info.get("country_code", "")
+    country = geo_info.get("country_name", "Unknown")
+    table.add_row("Current Egress IP", f"{flag} {current_ip} ({country}, {cc})")
+
+    policy_str = "[bold green]✓ COMPLIANT (Safe to run Antigravity)[/bold green]" if allowed else f"[bold red]⚠️ VIOLATION: {reason}[/bold red]"
+    table.add_row("Policy Check", policy_str)
+
+    console.print()
+    console.print(Panel(table, border_style="green" if allowed else "red"))
+    console.print("[dim]Commands: `agy-token shield on|off`, `agy-token shield mode restricted|whitelist`, `agy-token shield allow US,DE,GB`[/dim]\n")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="agy-token",
@@ -797,6 +894,14 @@ def main():
     p_status = subparsers.add_parser("status", help="Show token quota status and weekly refresh countdowns")
     p_status.add_argument("--models", action="store_true", help="Display all individual model quotas")
     p_status.add_argument("--force", action="store_true", help="Bypass local cache and query Google directly")
+
+    # shield
+    p_shield = subparsers.add_parser("shield", help="Manage Geo-Shield and emergency IP Killswitch")
+    p_shield.add_argument("shield_action", nargs="?", default="status", choices=["status", "on", "enable", "off", "disable", "mode", "allow", "action", "trigger"], help="Shield action to perform")
+    p_shield.add_argument("extra_arg", nargs="?", default=None, help="Parameter value for mode/allow/action")
+    p_shield.add_argument("--mode", dest="mode_val", choices=["restricted", "whitelist"], help="Policy mode")
+    p_shield.add_argument("--allow", dest="countries", help="Comma-separated country codes (e.g. US,DE,GB)")
+    p_shield.add_argument("--action", dest="action_val", choices=["kill_process", "kill_network", "both"], help="Action on violation")
 
     # ip
     p_ip = subparsers.add_parser("ip", help="Display public exit IP, geolocation, and Antigravity compatibility")
@@ -867,6 +972,7 @@ def main():
 
     cmd_map = {
         "status": cmd_status,
+        "shield": cmd_shield,
         "ip": cmd_ip,
         "watch": cmd_watch,
         "check": cmd_check,

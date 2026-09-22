@@ -11,6 +11,7 @@ from . import accounts
 from . import auth
 from . import switcher
 from . import geo
+from . import shield
 
 ACCOUNTS_FILE = os.path.expanduser("~/.config/antigravity-token-tracker/accounts.json")
 
@@ -158,6 +159,31 @@ def check_system_environment() -> List[Dict[str, Any]]:
             "component": "Egress IP & Geolocation",
             "status": "WARN",
             "details": f"Geo lookup failed: {e}"
+        })
+
+    # 7. Geo-Shield & IP Killswitch
+    try:
+        shield_cfg = shield.load_shield_config()
+        is_on = shield_cfg.get("enabled", True)
+        mode = shield_cfg.get("mode", "restricted")
+        action = shield_cfg.get("action", "kill_process")
+        if is_on:
+            results.append({
+                "component": "IP Killswitch Shield",
+                "status": "PASS",
+                "details": f"ACTIVE [Mode: {mode}, Action: {action}] - Auto-closes Antigravity if VPN drops"
+            })
+        else:
+            results.append({
+                "component": "IP Killswitch Shield",
+                "status": "WARN",
+                "details": "DISABLED (Run `agy-token shield on` to activate VPN drop protection)"
+            })
+    except Exception as e:
+        results.append({
+            "component": "IP Killswitch Shield",
+            "status": "WARN",
+            "details": f"Could not inspect shield config: {e}"
         })
 
     return results
