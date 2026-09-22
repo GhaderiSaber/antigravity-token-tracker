@@ -19,6 +19,7 @@ from . import quota
 from . import lifecycle
 from . import notifier
 from . import auth
+from . import failover
 
 console = Console()
 
@@ -132,6 +133,11 @@ def cmd_status(args):
     if rec:
         console.print(Panel(f"[bold yellow]{rec}[/bold yellow]", title="💡 Smart Recommendation", border_style="yellow"))
 
+    # Failover standby status
+    failover_status = failover.get_failover_status(analyzed)
+    if failover_status.get("backup_candidate_email"):
+        console.print(f"[dim]⚡ [bold cyan]Auto-Failover Standby:[/bold cyan] If active session depletes, next in line is [bold]{failover_status['backup_candidate_email']}[/bold] ({failover_status['backup_candidate_pct']}% available)[/dim]\n")
+
     # Log to history
     lifecycle.log_lifecycle_snapshot(analyzed)
 
@@ -142,10 +148,26 @@ def cmd_status(args):
 
 def cmd_watch(args):
     console.print("[green]Starting live tracker watch mode (press Ctrl+C to exit)...[/green]")
+    if getattr(args, "auto_switch", False):
+        console.print(f"[bold green]⚡ Auto-Failover ACTIVE[/bold green] (triggers when active quota <= {getattr(args, 'threshold', 1.0)}%, cooldown: {getattr(args, 'cooldown', 120)}s)")
     try:
         while True:
             console.clear()
             cmd_status(args)
+
+            if getattr(args, "auto_switch", False):
+                all_quotas = quota.fetch_all_accounts_quota(force_refresh=False)
+                analyzed = {e: lifecycle.analyze_account_lifecycle(q) for e, q in all_quotas.items()}
+                res = failover.evaluate_and_execute_failover(
+                    analyzed,
+                    threshold=getattr(args, "threshold", 1.0),
+                    restart=not getattr(args, "no_restart", False),
+                    cooldown_seconds=getattr(args, "cooldown", 120)
+                )
+                if res.get("triggered"):
+                    console.print(f"\n[bold green]⚡ Auto-Failover: {res.get('message')}[/bold green]")
+                    time.sleep(3)
+
             time.sleep(args.interval)
     except KeyboardInterrupt:
         console.print("\n[dim]Exited watch mode.[/dim]")
@@ -478,7 +500,18 @@ def cmd_remove(args):
 
 
 def cmd_daemon(args):
-    console.print(f"[bold cyan]Antigravity Token Lifecycle Daemon started.[/bold cyan] Polling every {args.interval}s...")
+    interval = getattr(args, "interval", 300)
+    auto_switch = getattr(args, "auto_switch", False)
+    threshold = getattr(args, "threshold", 1.0)
+    cooldown = getattr(args, "cooldown", 120)
+    no_restart = getattr(args, "no_restart", False)
+
+    console.print(f"[bold cyan]Antigravity Token Lifecycle Daemon started.[/bold cyan] Polling every {interval}s...")
+    if auto_switch:
+        console.print(f"[bold green]⚡ Auto-Failover: ENABLED[/bold green] (triggers when active quota <= {threshold}%, cooldown: {cooldown}s)")
+    else:
+        console.print("[dim]Auto-failover is disabled (monitoring mode). Use --auto-switch to enable automated account switching.[/dim]")
+
     try:
         while True:
             try:
@@ -487,9 +520,21 @@ def cmd_daemon(args):
                 analyzed = {e: lifecycle.analyze_account_lifecycle(q) for e, q in all_quotas.items()}
                 lifecycle.log_lifecycle_snapshot(analyzed)
                 notifier.check_and_notify_lifecycle_events(analyzed)
+
+                if auto_switch:
+                    res = failover.evaluate_and_execute_failover(
+                        analyzed,
+                        threshold=threshold,
+                        restart=not no_restart,
+                        cooldown_seconds=cooldown
+                    )
+                    if res.get("triggered"):
+                        console.print(f"[bold green]⚡ Auto-Failover: {res.get('message')}[/bold green]")
+                    elif res.get("reason") in ("COOLDOWN", "ALL_ACCOUNTS_DEPLETED", "SWITCH_FAILED"):
+                        console.print(f"[dim]Failover notice: {res.get('message')}[/dim]")
             except Exception as e:
                 console.print(f"[red]Daemon error during cycle: {e}[/red]")
-            time.sleep(args.interval)
+            time.sleep(interval)
     except KeyboardInterrupt:
         console.print("\n[dim]Daemon stopped.[/dim]")
         return 0
@@ -513,11 +558,16 @@ def cmd_switch(args):
         target_query = None
 
     if getattr(args, "auto", False):
-        if not best_candidate_email:
+        all_quotas = quota.fetch_all_accounts_quota(force_refresh=False)
+        analyzed = {e: lifecycle.analyze_account_lifecycle(q) for e, q in all_quotas.items()}
+        failover_info = failover.get_failover_status(analyzed)
+        target_email = failover_info.get("backup_candidate_email") or best_candidate_email
+        target_pct = failover_info.get("backup_candidate_pct", 0.0)
+
+        if not target_email:
             console.print("[yellow]No alternative account found with available quota.[/yellow]")
             return 1
-        target_email = best_candidate_email
-        console.print(f"[cyan]Auto-selected best available account:[/cyan] [bold]{target_email}[/bold]")
+        console.print(f"[cyan]Auto-selected best available account:[/cyan] [bold]{target_email}[/bold] ([green]{target_pct:.1f}% quota[/green])")
     elif target_query:
         target_email, err = resolve_target_account(target_query, all_accs)
         if err:
@@ -563,6 +613,10 @@ def main():
     p_watch.add_argument("--interval", type=int, default=30, help="Refresh interval in seconds (default: 30)")
     p_watch.add_argument("--models", action="store_true", help="Display all individual model quotas")
     p_watch.add_argument("--force", action="store_true", help="Bypass local cache")
+    p_watch.add_argument("--auto-switch", action="store_true", help="Automatically switch session when active account quota runs out")
+    p_watch.add_argument("--threshold", type=float, default=1.0, help="Quota percentage threshold to trigger auto-failover (default: 1.0%%)")
+    p_watch.add_argument("--cooldown", type=int, default=120, help="Minimum seconds between auto-failovers (default: 120)")
+    p_watch.add_argument("--no-restart", action="store_true", help="Swap session without restarting Antigravity")
 
     # check
     p_check = subparsers.add_parser("check", help="Fast exit-code / JSON check (for shell scripts/prompts)")
@@ -580,8 +634,12 @@ def main():
     p_remove.add_argument("target", nargs="?", default=None, help="Email, number [1-N], or name of account to remove")
 
     # daemon
-    p_daemon = subparsers.add_parser("daemon", help="Run background monitor with desktop alerts")
-    p_daemon.add_argument("--interval", type=int, default=600, help="Polling interval in seconds (default: 600)")
+    p_daemon = subparsers.add_parser("daemon", help="Run background monitor with desktop alerts and auto-failover")
+    p_daemon.add_argument("--interval", type=int, default=300, help="Polling interval in seconds (default: 300)")
+    p_daemon.add_argument("--auto-switch", action="store_true", help="Automatically switch session when active account quota runs out")
+    p_daemon.add_argument("--threshold", type=float, default=1.0, help="Quota percentage threshold to trigger auto-failover (default: 1.0%%)")
+    p_daemon.add_argument("--cooldown", type=int, default=120, help="Minimum seconds between auto-failovers (default: 120)")
+    p_daemon.add_argument("--no-restart", action="store_true", help="Swap session without restarting Antigravity")
 
     # web
     p_web = subparsers.add_parser("web", help="Start interactive browser dashboard")

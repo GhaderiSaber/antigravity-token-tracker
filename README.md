@@ -16,6 +16,9 @@ A standalone, multi-account lifecycle monitor and alerting utility for Google An
 - **Exhaustion & Finished Token Detection**:
   - Detects when an account's quota is finished (`<= 1.0%` remaining) or low.
   - Automatically recommends alternative accounts that have healthy quota available.
+- **⚡ Auto-Failover & Smart Switcher**:
+  - Monitors the active session and automatically fails over to the backup account with the highest available quota the moment your tokens hit `0%` (or custom `--threshold`).
+  - Features anti-flapping cooldown protection and native desktop alerts (`notify-send`).
 - **Native Desktop Notifications (`notify-send`)**:
   - Pops up a system alert when your weekly tokens run out.
   - Pops up a system notification the moment your weekly tokens refresh back to 100%!
@@ -105,10 +108,22 @@ agy-token web
 # Open http://localhost:8765 in your browser
 ```
 
-### 4. Background Notification Daemon
-Polls Google's quota endpoint in the background (default: every 10 minutes) and sends desktop notifications on token exhaustion or refresh:
+### 4. Background Daemon & Zero-Downtime Auto-Failover
+Runs as a background service that continuously tracks token life. With `--auto-switch`, it automatically swaps credentials and restarts Antigravity when your active quota exhausts:
 ```bash
+# Monitoring + desktop alerts only:
 agy-token daemon
+
+# Zero-downtime Auto-Failover mode (switches session when active quota <= 1.0%):
+agy-token daemon --auto-switch
+
+# Custom threshold and cooldown:
+agy-token daemon --auto-switch --threshold 2.0 --cooldown 180 --interval 120
+```
+
+To enable auto-failover as a persistent Linux user service:
+```bash
+systemctl --user enable --now antigravity-token-tracker.service
 ```
 
 ### 5. Multi-Account Management

@@ -4,7 +4,8 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/agy-token daemon --interval 600
+# Enable --auto-switch for zero-downtime automatic account failover when quota is exhausted
+ExecStart=%h/.local/bin/agy-token daemon --interval 300 --auto-switch
 Restart=on-failure
 RestartSec=30
 Environment=DISPLAY=:0

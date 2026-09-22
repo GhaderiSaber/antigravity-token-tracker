@@ -26,10 +26,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             all_quotas = quota.fetch_all_accounts_quota(force_refresh=False)
             analyzed = {e: lifecycle.analyze_account_lifecycle(q) for e, q in all_quotas.items()}
             rec = lifecycle.compute_switching_recommendation(analyzed)
+            from antigravity_tracker import failover
+            failover_info = failover.get_failover_status(analyzed)
 
             payload = {
                 "accounts": analyzed,
-                "recommendation": rec
+                "recommendation": rec,
+                "failover": failover_info
             }
 
             data = json.dumps(payload).encode("utf-8")
@@ -38,6 +41,28 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             self.wfile.write(data)
+
+        elif parsed.path == "/api/switch-best":
+            accounts.sync_from_antigravity()
+            all_quotas = quota.fetch_all_accounts_quota(force_refresh=False)
+            analyzed = {e: lifecycle.analyze_account_lifecycle(q) for e, q in all_quotas.items()}
+            from antigravity_tracker import failover, switcher
+            failover_info = failover.get_failover_status(analyzed)
+            best_target = failover_info.get("backup_candidate_email")
+
+            if not best_target:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": "No backup candidate with available quota."}).encode("utf-8"))
+                return
+
+            success, msg = switcher.switch_to_account(best_target, restart=True)
+            self.send_response(200 if success else 500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": success, "message": msg, "target": best_target}).encode("utf-8"))
 
         elif parsed.path == "/api/switch":
             query = urllib.parse.parse_qs(parsed.query)

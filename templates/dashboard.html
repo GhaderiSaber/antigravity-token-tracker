@@ -230,6 +230,7 @@
       <div class="controls">
         <span id="lastUpdated">Checking...</span>
         <button onclick="loadData()">↻ Refresh</button>
+        <button class="btn-switch" onclick="switchBest()">⚡ Auto-Switch to Best</button>
       </div>
     </header>
 
@@ -267,13 +268,42 @@
       document.getElementById('lastUpdated').textContent = `Updated: ${new Date().toLocaleTimeString()}`;
       const accounts = data.accounts || {};
       const rec = data.recommendation;
+      const failover = data.failover;
 
       const alertContainer = document.getElementById('alertContainer');
-      if (rec) {
-        alertContainer.innerHTML = `<div class="alert-banner"><span>💡</span> <div>${rec}</div></div>`;
-      } else {
-        alertContainer.innerHTML = '';
+      let alertHtml = '';
+
+      if (failover && failover.backup_candidate_email) {
+        if (failover.is_active_exhausted) {
+          alertHtml += `
+            <div class="alert-banner" style="background: rgba(234, 67, 53, 0.15); border-color: rgba(234, 67, 53, 0.4); color: #f28b82; justify-content: space-between;">
+              <div style="display:flex; align-items:center; gap:12px;">
+                <span style="font-size: 20px;">⚠️</span>
+                <div>
+                  <strong>Active Quota Exhausted!</strong> ${failover.active_email} has ${failover.active_quota_pct}% tokens remaining.<br>
+                  <span style="color:#f0f3f6;">Recommended backup: <strong>${failover.backup_candidate_email}</strong> (${failover.backup_candidate_pct}% quota ready)</span>
+                </div>
+              </div>
+              <button class="btn-switch" style="background:#ea4335;" onclick="switchAccount('${failover.backup_candidate_email}')">⚡ Switch Now</button>
+            </div>
+          `;
+        } else {
+          alertHtml += `
+            <div class="alert-banner" style="background: rgba(66, 133, 244, 0.08); border-color: rgba(66, 133, 244, 0.25); color: #8ab4f8;">
+              <span style="font-size: 18px;">🛡️</span>
+              <div>
+                <strong>Smart Failover Standby:</strong> Active: <strong>${failover.active_email || 'N/A'}</strong> (${failover.active_quota_pct}%) &nbsp;|&nbsp; 
+                Next Backup: <strong>${failover.backup_candidate_email}</strong> (${failover.backup_candidate_pct}% ready)
+              </div>
+            </div>
+          `;
+        }
       }
+
+      if (rec && (!failover || !failover.is_active_exhausted)) {
+        alertHtml += `<div class="alert-banner"><span>💡</span> <div>${rec}</div></div>`;
+      }
+      alertContainer.innerHTML = alertHtml;
 
       let html = '';
       for (const [email, acc] of Object.entries(accounts)) {
@@ -373,6 +403,25 @@
           loadData();
         } else {
           alert(`Switch failed: ${res.message || res.error}`);
+          loadData();
+        }
+      } catch (err) {
+        alert(`Error: ${err.message}`);
+      }
+    }
+
+    async function switchBest() {
+      if (!confirm("Automatically switch Antigravity to the backup account with the highest available quota? Antigravity will restart.")) return;
+      const alertContainer = document.getElementById('alertContainer');
+      alertContainer.innerHTML = `<div class="alert-banner" style="background:#1a2333; border-color:#4285f4;"><span>⏳</span> <div>Analyzing quotas and auto-switching to healthiest account...</div></div>`;
+      try {
+        const resp = await fetch('/api/switch-best');
+        const res = await resp.json();
+        if (res.success) {
+          alert(`✓ Auto-switched to ${res.target}!\n${res.message}`);
+          loadData();
+        } else {
+          alert(`Auto-switch failed: ${res.error || res.message}`);
           loadData();
         }
       } catch (err) {
