@@ -107,6 +107,12 @@ def sync_from_antigravity() -> Tuple[Optional[str], Dict[str, Dict[str, Any]]]:
             "app_csrf_token": desktop_session.get("csrf_token"),
             "last_synced": time.time()
         }
+        # Automatically snapshot active desktop session for seamless switching
+        try:
+            from . import switcher
+            switcher.snapshot_desktop_session(desktop_email)
+        except Exception:
+            pass
 
     # 2. Discover Antigravity IDE (state.vscdb)
     tokens = auth.extract_tokens_from_state_db()

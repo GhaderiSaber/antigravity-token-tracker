@@ -121,9 +121,8 @@ def analyze_account_lifecycle(account_quota: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def compute_switching_recommendation(all_analyzed_quotas: Dict[str, Dict[str, Any]]) -> Optional[str]:
-    """If one account has exhausted Gemini tokens, checks if another account has available quota."""
+    """If active account has exhausted Gemini tokens, checks if another account has available quota."""
     if len(all_analyzed_quotas) < 2:
-        # Only 1 account
         for email, q in all_analyzed_quotas.items():
             if q.get("is_gemini_exhausted"):
                 for g in q.get("groups", []):
@@ -131,26 +130,51 @@ def compute_switching_recommendation(all_analyzed_quotas: Dict[str, Dict[str, An
                         return f"Weekly Gemini tokens on {email} are EXHAUSTED ({g['weekly']['remainingPercent']}%). Full refresh in {g['weekly']['countdown']}."
         return None
 
-    # Multi-account comparison
     exhausted_accs = []
     healthy_accs = []
+    active_desktop_email = None
 
     for email, q in all_analyzed_quotas.items():
+        if q.get("is_current_desktop_session"):
+            active_desktop_email = email
+
+        if not q.get("groups"):
+            continue
+
         if q.get("is_gemini_exhausted"):
             exhausted_accs.append(email)
         else:
-            # Check weekly remaining
             rem_pct = 0.0
+            has_gemini = False
             for g in q.get("groups", []):
                 if "gemini" in g.get("displayName", "").lower() and g.get("weekly"):
                     rem_pct = g["weekly"].get("remainingPercent", 0.0)
-            healthy_accs.append((email, rem_pct))
+                    has_gemini = True
+            if has_gemini:
+                if rem_pct > 1.0:
+                    healthy_accs.append((email, rem_pct))
+                else:
+                    exhausted_accs.append(email)
 
-    if exhausted_accs and healthy_accs:
-        # Sort healthy by highest remaining
-        healthy_accs.sort(key=lambda x: x[1], reverse=True)
+    healthy_accs.sort(key=lambda x: x[1], reverse=True)
+
+    # Case 1: Active desktop account is exhausted
+    if active_desktop_email and active_desktop_email in exhausted_accs:
+        if healthy_accs:
+            best_email, best_pct = healthy_accs[0]
+            return f"⚠️ Active account ({active_desktop_email}) Gemini quota is EXHAUSTED! Switch to {best_email} which has {best_pct:.1f}% quota available."
+        else:
+            return f"⚠️ Active account ({active_desktop_email}) Gemini quota is EXHAUSTED, and all backup accounts are also depleted!"
+
+    # Case 2: No active desktop account detected or active account not exhausted
+    # If all accounts are exhausted
+    if not healthy_accs and exhausted_accs:
+        return "⚠️ All tracked accounts have exhausted their weekly Gemini quota."
+
+    # If some are exhausted and active account is None
+    if not active_desktop_email and exhausted_accs and healthy_accs:
         best_email, best_pct = healthy_accs[0]
-        return f"💡 Switch Alert: {', '.join(exhausted_accs)} Gemini tokens are finished! Switch to {best_email} which has {best_pct}% quota available."
+        return f"💡 Switch Alert: {', '.join(exhausted_accs)} Gemini tokens are finished. Recommended account: {best_email} ({best_pct:.1f}% quota available)."
 
     return None
 

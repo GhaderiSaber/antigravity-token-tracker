@@ -56,6 +56,10 @@ def render_account_dashboard(analyzed_account: dict, show_models: bool = False):
         header_title += "  [bold green]● Active in Antigravity App[/bold green]"
     elif is_ide_active:
         header_title += "  [bold green]● Active in IDE[/bold green]"
+    elif analyzed_account.get("is_cached"):
+        header_title += "  [dim yellow]● Inactive (Last Seen Quota)[/dim yellow]"
+    else:
+        header_title += "  [dim]● Inactive[/dim]"
 
     table = Table(box=None, expand=True)
     table.add_column("Model Group", style="bold", ratio=2)
@@ -64,18 +68,22 @@ def render_account_dashboard(analyzed_account: dict, show_models: bool = False):
     table.add_column("5-Hour Quota", ratio=3)
     table.add_column("Status", justify="center", ratio=2)
 
-    for g in analyzed_account.get("groups", []):
-        g_name = g.get("displayName", "")
-        w = g.get("weekly")
-        f = g.get("fiveHour")
+    groups = analyzed_account.get("groups", [])
+    if groups:
+        for g in groups:
+            g_name = g.get("displayName", "")
+            w = g.get("weekly")
+            f = g.get("fiveHour")
 
-        w_bar = create_progress_bar(w["remainingPercent"]) if w else "N/A"
-        w_reset = f"[bold]{w['countdown']}[/bold]\n[dim]{w['resetTime'][:16].replace('T', ' ')} UTC[/dim]" if w else "N/A"
+            w_bar = create_progress_bar(w["remainingPercent"]) if w else "N/A"
+            w_reset = f"[bold]{w['countdown']}[/bold]\n[dim]{w['resetTime'][:16].replace('T', ' ')} UTC[/dim]" if w else "N/A"
 
-        f_bar = create_progress_bar(f["remainingPercent"]) if f else "N/A"
-        badge = f"[{w['statusStyle']}]{w['statusBadge']}[/{w['statusStyle']}]" if w else "N/A"
+            f_bar = create_progress_bar(f["remainingPercent"]) if f else "N/A"
+            badge = f"[{w['statusStyle']}]{w['statusBadge']}[/{w['statusStyle']}]" if w else "N/A"
 
-        table.add_row(g_name, w_bar, w_reset, f_bar, badge)
+            table.add_row(g_name, w_bar, w_reset, f_bar, badge)
+    else:
+        table.add_row("[dim italic]No quota data recorded yet. Log into Antigravity to snapshot session.[/dim italic]", "-", "-", "-", "[dim]NO DATA[/dim]")
 
     console.print(Panel(table, title=header_title, border_style="blue" if (is_desktop_active or is_ide_active) else "dim"))
 

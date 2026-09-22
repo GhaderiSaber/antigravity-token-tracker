@@ -285,6 +285,10 @@
           activeBadge = '<div class="active-badge"><div class="active-dot"></div> Active in Antigravity App</div>';
         } else if (acc.is_current_ide_session) {
           activeBadge = '<div class="active-badge"><div class="active-dot"></div> Active in IDE</div>';
+        } else if (acc.is_cached) {
+          activeBadge = '<div class="active-badge" style="background:rgba(251, 188, 4, 0.15); border-color:rgba(251, 188, 4, 0.3); color:#fbbc04;"><div class="active-dot" style="background:#fbbc04;"></div> Inactive (Last Seen)</div>';
+        } else {
+          activeBadge = '<div class="active-badge" style="background:rgba(128, 134, 139, 0.15); border-color:rgba(128, 134, 139, 0.3); color:#9aa0a6;"><div class="active-dot" style="background:#9aa0a6;"></div> Inactive</div>';
         }
 
         html += `
@@ -302,6 +306,10 @@
 
             <div class="grid">
         `;
+
+        if (!acc.groups || acc.groups.length === 0) {
+          html += `<div style="grid-column: 1 / -1; padding: 24px; text-align: center; color: var(--text-muted); font-style: italic;">No quota data recorded yet. Log into Antigravity with this account to snapshot session & quota.</div>`;
+        }
 
         for (const g of (acc.groups || [])) {
           const w = g.weekly;

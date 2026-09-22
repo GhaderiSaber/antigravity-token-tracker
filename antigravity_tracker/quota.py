@@ -1,4 +1,5 @@
 import time
+import os
 import json
 import urllib.request
 import urllib.error
@@ -12,6 +13,79 @@ QUOTA_MODELS_URL = "https://daily-cloudcode-pa.googleapis.com/v1internal:retriev
 # In-memory cache per email: {email: (timestamp, data)}
 _QUOTA_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
 CACHE_TTL_SECONDS = 60  # 1 minute local cache
+
+
+def get_historical_quota(email: str) -> Optional[Dict[str, Any]]:
+    """Recovers last logged quota from token_history.jsonl if available."""
+    history_file = os.path.expanduser("~/.gemini/antigravity/token_history.jsonl")
+    if not os.path.isfile(history_file):
+        return None
+
+    email_clean = email.strip().lower()
+    last_record = None
+    last_timestamp = None
+
+    try:
+        with open(history_file, "r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    data = json.loads(line)
+                    accs = data.get("accounts", {})
+                    if email_clean in accs:
+                        g_data = accs[email_clean].get("groups", {})
+                        if g_data and any(v.get("weekly_pct") is not None for v in g_data.values()):
+                            last_record = accs[email_clean]
+                            last_timestamp = data.get("timestamp")
+                except Exception:
+                    continue
+    except Exception:
+        return None
+
+    if not last_record:
+        return None
+
+    parsed_groups = []
+    for g_name, g_vals in last_record.get("groups", {}).items():
+        w_pct = g_vals.get("weekly_pct")
+        w_reset = g_vals.get("weekly_reset")
+        f_pct = g_vals.get("5h_pct")
+
+        w_bucket = None
+        if w_pct is not None:
+            w_bucket = {
+                "bucketId": f"{g_name.lower().replace(' ', '-')}-weekly",
+                "window": "weekly",
+                "displayName": g_name,
+                "remainingFraction": round(float(w_pct) / 100.0, 4),
+                "remainingPercent": round(float(w_pct), 2),
+                "resetTime": w_reset or "",
+                "description": ""
+            }
+
+        f_bucket = None
+        if f_pct is not None:
+            f_bucket = {
+                "bucketId": f"{g_name.lower().replace(' ', '-')}-5h",
+                "window": "5h",
+                "displayName": g_name,
+                "remainingFraction": round(float(f_pct) / 100.0, 4),
+                "remainingPercent": round(float(f_pct), 2),
+                "resetTime": "",
+                "description": ""
+            }
+
+        parsed_groups.append({
+            "displayName": g_name,
+            "description": "",
+            "weekly": w_bucket,
+            "fiveHour": f_bucket
+        })
+
+    return {
+        "groups": parsed_groups,
+        "models": [],
+        "checked_at": last_timestamp or time.time()
+    }
 
 
 def fetch_account_quota(account: Dict[str, Any], force_refresh: bool = False) -> Optional[Dict[str, Any]]:
@@ -65,11 +139,39 @@ def fetch_account_quota(account: Dict[str, Any], force_refresh: bool = False) ->
                 pass
 
     if not quota_summary_data:
+        # Fallback to persistent last-known quota if available
+        last_known = account.get("last_known_quota")
+        if not last_known or not last_known.get("groups"):
+            last_known = get_historical_quota(email)
+            if last_known:
+                account["last_known_quota"] = last_known
+                accounts.upsert_account(account)
+
+        if last_known and last_known.get("groups"):
+            result = {
+                "email": email,
+                "name": account.get("name", ""),
+                "tier": account.get("tier", "Standard"),
+                "is_current_ide_session": account.get("is_current_ide_session", False),
+                "is_current_desktop_session": account.get("is_current_desktop_session", False),
+                "groups": last_known.get("groups", []),
+                "models": last_known.get("models", []),
+                "checked_at": last_known.get("checked_at", now),
+                "is_cached": True
+            }
+            _QUOTA_CACHE[email] = (now, result)
+            return result
+
         return {
             "email": email,
-            "error": "Could not retrieve quota summary. Ensure account is logged into Antigravity or Antigravity IDE.",
+            "name": account.get("name", ""),
+            "tier": account.get("tier", "Standard"),
+            "is_current_ide_session": account.get("is_current_ide_session", False),
+            "is_current_desktop_session": account.get("is_current_desktop_session", False),
+            "error": "Account session inactive. Log into Antigravity to refresh quota.",
             "groups": [],
-            "models": []
+            "models": [],
+            "is_cached": False
         }
 
     # Parse and structure groups
@@ -136,11 +238,21 @@ def fetch_account_quota(account: Dict[str, Any], force_refresh: bool = False) ->
         "is_current_desktop_session": account.get("is_current_desktop_session", False),
         "groups": parsed_groups,
         "models": parsed_models,
+        "checked_at": now,
+        "is_cached": False
+    }
+
+    # Automatically persist quota to accounts.json
+    account["last_known_quota"] = {
+        "groups": parsed_groups,
+        "models": parsed_models,
         "checked_at": now
     }
+    accounts.upsert_account(account)
 
     _QUOTA_CACHE[email] = (now, result)
     return result
+
 
 
 def fetch_all_accounts_quota(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
