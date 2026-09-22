@@ -22,6 +22,7 @@ from . import auth
 from . import failover
 from . import geo
 from . import shield
+from . import balancer
 
 console = Console()
 
@@ -139,12 +140,20 @@ def cmd_status(args):
     else:
         shield_badge = "[dim]🛡️ Shield: OFF[/dim]"
 
+    # Balancer Status Badge
+    bal_cfg = balancer.load_balancer_config()
+    if bal_cfg.get("enabled", False):
+        strat_name = bal_cfg.get("strategy", "watermark").replace("_", " ").title()
+        bal_badge = f"[bold cyan]🔄 Balancer: {strat_name}[/bold cyan]"
+    else:
+        bal_badge = "[dim]🔄 Balancer: OFF[/dim]"
+
     # Header
     console.print()
     console.print("[bold cyan]═══════════════════════════════════════════════════════════════════════════════[/bold cyan]")
     console.print("[bold white]            ⚡ ANTIGRAVITY TOKEN & WEEKLY QUOTA LIFECYCLE TRACKER             [/bold white]")
     console.print(f"[dim]                Current Local Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (UTC: {datetime.now(timezone.utc).strftime('%H:%M:%S')})[/dim]")
-    console.print(f"[dim]                🌐 Exit IP: [/dim][bold]{flag} {ip_str}[/bold] [dim]({loc})[/dim]  {ip_status_badge}  {shield_badge}")
+    console.print(f"[dim]                🌐 Exit IP: [/dim][bold]{flag} {ip_str}[/bold] [dim]({loc})[/dim]  {ip_status_badge}  {shield_badge}  {bal_badge}")
     console.print("[bold cyan]═══════════════════════════════════════════════════════════════════════════════[/bold cyan]")
     console.print()
 
@@ -574,6 +583,16 @@ def cmd_daemon(args):
                             console.print(f"[bold green]⚡ Auto-Failover: {res.get('message')}[/bold green]")
                         elif res.get("reason") in ("COOLDOWN", "ALL_ACCOUNTS_DEPLETED", "SWITCH_FAILED"):
                             console.print(f"[dim]Failover notice: {res.get('message')}[/dim]")
+                        else:
+                            # Evaluate proactive pool balancing
+                            bal_res = balancer.evaluate_and_execute_balancer(analyzed)
+                            if bal_res.get("triggered"):
+                                console.print(f"[bold cyan]🔄 Auto-Balancer: {bal_res.get('message')}[/bold cyan]")
+                    else:
+                        # Even if auto-failover is off, check if balancer is explicitly enabled
+                        bal_res = balancer.evaluate_and_execute_balancer(analyzed)
+                        if bal_res.get("triggered"):
+                            console.print(f"[bold cyan]🔄 Auto-Balancer: {bal_res.get('message')}[/bold cyan]")
                     applet.refresh_data(force=False)
                 except Exception as e:
                     console.print(f"[red]Daemon error during cycle: {e}[/red]")
@@ -607,6 +626,14 @@ def cmd_daemon(args):
                         console.print(f"[bold green]⚡ Auto-Failover: {res.get('message')}[/bold green]")
                     elif res.get("reason") in ("COOLDOWN", "ALL_ACCOUNTS_DEPLETED", "SWITCH_FAILED"):
                         console.print(f"[dim]Failover notice: {res.get('message')}[/dim]")
+                    else:
+                        bal_res = balancer.evaluate_and_execute_balancer(analyzed)
+                        if bal_res.get("triggered"):
+                            console.print(f"[bold cyan]🔄 Auto-Balancer: {bal_res.get('message')}[/bold cyan]")
+                else:
+                    bal_res = balancer.evaluate_and_execute_balancer(analyzed)
+                    if bal_res.get("triggered"):
+                        console.print(f"[bold cyan]🔄 Auto-Balancer: {bal_res.get('message')}[/bold cyan]")
             except Exception as e:
                 console.print(f"[red]Daemon error during cycle: {e}[/red]")
             time.sleep(interval)
@@ -887,6 +914,146 @@ def cmd_shield(args):
     return 0
 
 
+def cmd_balance(args):
+    cfg = balancer.load_balancer_config()
+    state = balancer.load_balancer_state()
+    action = getattr(args, "balance_action", "status") or "status"
+
+    if action in ("on", "enable"):
+        cfg["enabled"] = True
+        balancer.save_balancer_config(cfg)
+        strat = cfg.get("strategy", "watermark").replace("_", " ").title()
+        console.print(f"\n[bold green]✓ Auto-Balancer ENABLED[/bold green] [dim](Strategy: {strat})[/dim]\n")
+        return 0
+
+    elif action in ("off", "disable"):
+        cfg["enabled"] = False
+        balancer.save_balancer_config(cfg)
+        console.print("\n[bold yellow]✓ Auto-Balancer DISABLED[/bold yellow]\n")
+        return 0
+
+    elif action == "strategy":
+        strat_val = getattr(args, "strategy_val", None) or getattr(args, "extra_arg", None)
+        if not strat_val or strat_val not in balancer.SUPPORTED_STRATEGIES:
+            console.print(f"[red]Invalid strategy '{strat_val}'. Choose from: {', '.join(balancer.SUPPORTED_STRATEGIES)}[/red]")
+            return 1
+        cfg["strategy"] = strat_val
+        balancer.save_balancer_config(cfg)
+        console.print(f"\n[green]✓ Balancer strategy set to: [bold]{strat_val}[/bold][/green]\n")
+        return 0
+
+    elif action == "config":
+        updated = False
+        if getattr(args, "spread", None) is not None:
+            cfg["watermark_spread_pct"] = float(args.spread)
+            updated = True
+        if getattr(args, "interval", None) is not None:
+            cfg["round_robin_interval_minutes"] = int(args.interval)
+            updated = True
+        if getattr(args, "expiry_window", None) is not None:
+            cfg["expiry_window_hours"] = int(args.expiry_window)
+            updated = True
+        if getattr(args, "min_quota", None) is not None:
+            cfg["min_quota_pct"] = float(args.min_quota)
+            updated = True
+
+        if updated:
+            balancer.save_balancer_config(cfg)
+            console.print("[green]✓ Balancer configuration updated.[/green]\n")
+        else:
+            console.print("[dim]No configuration parameters specified. Use --spread, --interval, --expiry-window, or --min-quota.[/dim]\n")
+        return 0
+
+    elif action == "rotate":
+        strat_override = getattr(args, "strategy_val", None) or getattr(args, "extra_arg", None)
+        dry_run = getattr(args, "dry_run", False)
+        force = getattr(args, "force", False)
+
+        console.print(f"[cyan]Evaluating pool rotation (Strategy: {strat_override or cfg.get('strategy', 'watermark')})...[/cyan]")
+        all_quotas = quota.fetch_all_accounts_quota(force_refresh=False)
+        analyzed = {e: lifecycle.analyze_account_lifecycle(q) for e, q in all_quotas.items()}
+
+        res = balancer.evaluate_and_execute_balancer(
+            analyzed,
+            dry_run=dry_run,
+            force=force or True,
+            strategy_override=strat_override
+        )
+
+        if res.get("triggered"):
+            mode_tag = "[bold yellow][DRY RUN][/bold yellow] " if dry_run else "[bold green]✓[/bold green] "
+            console.print(f"\n{mode_tag}{res.get('message')}\n")
+        else:
+            console.print(f"\n[yellow]No rotation executed: {res.get('message')}[/yellow]\n")
+        return 0
+
+    # Default: Show Balancer Status & Pool Overview
+    all_quotas = quota.fetch_all_accounts_quota(force_refresh=False)
+    analyzed = {e: lifecycle.analyze_account_lifecycle(q) for e, q in all_quotas.items()}
+    pool = balancer.get_eligible_pool_accounts(analyzed, min_quota_pct=cfg.get("min_quota_pct", 5.0))
+
+    table = Table(title="🔄 Antigravity Auto-Balancer & Pool Rotation", box=None)
+    table.add_column("Setting", style="bold cyan", ratio=1)
+    table.add_column("Value", ratio=2)
+
+    status_str = "[bold green]● ACTIVE[/bold green]" if cfg.get("enabled", False) else "[bold dim]○ DISABLED[/bold dim]"
+    table.add_row("Balancer Status", status_str)
+    strat_key = cfg.get("strategy", "watermark")
+    strat_desc = {
+        "watermark": f"Watermark Leveling (Min spread: {cfg.get('watermark_spread_pct', 20.0)}%)",
+        "expiry_first": f"Zero-Waste Reset Optimizer (Window: {cfg.get('expiry_window_hours', 36)}h)",
+        "round_robin": f"Round-Robin Interval ({cfg.get('round_robin_interval_minutes', 60)}m)",
+        "reactive": "Reactive Fallback (depletion-only)"
+    }.get(strat_key, strat_key)
+    table.add_row("Active Strategy", f"[bold]{strat_key.title()}[/bold] - [dim]{strat_desc}[/dim]")
+
+    now = time.time()
+    last_ts = state.get("last_rotation_timestamp", 0.0)
+    cooldown = cfg.get("cooldown_seconds", 300)
+    time_since = now - last_ts
+    if time_since < cooldown:
+        cd_str = f"[yellow]{int(cooldown - time_since)}s remaining[/yellow]"
+    else:
+        cd_str = "[green]Ready (cooldown elapsed)[/green]"
+    table.add_row("Anti-Flap Cooldown", cd_str)
+
+    if state.get("last_to_email"):
+        ago_min = int((now - last_ts) // 60) if last_ts > 0 else 0
+        table.add_row("Last Rotation", f"{state.get('last_from_email')} ➔ {state.get('last_to_email')} ({ago_min}m ago via {state.get('last_strategy_used')})")
+
+    console.print()
+    console.print(Panel(table, border_style="cyan"))
+
+    # Pool Ranking Table
+    p_table = Table(title="👥 Switchable Account Pool", box=None)
+    p_table.add_column("Account Email", style="bold")
+    p_table.add_column("Quota", justify="right")
+    p_table.add_column("Weekly Reset In", justify="right", style="dim")
+    p_table.add_column("Pool Role", justify="center")
+    p_table.add_column("Status", justify="center")
+
+    for acc in sorted(pool, key=lambda x: x["quota_pct"], reverse=True):
+        email_str = acc["email"]
+        q_pct = f"{acc['quota_pct']:.1f}%"
+        hrs = acc["reset_seconds"] / 3600.0
+        reset_str = f"{hrs:.1f}h" if hrs < 48 else f"{hrs/24:.1f}d"
+
+        if acc["is_active"]:
+            role = "[bold cyan]● CURRENT ACTIVE[/bold cyan]"
+        elif acc["is_eligible"]:
+            role = "[green]Ready Candidate[/green]"
+        else:
+            role = "[dim]Depleted / Low[/dim]"
+
+        status_flag = "[bold red]EXHAUSTED[/bold red]" if acc["is_exhausted"] else "[bold green]HEALTHY[/bold green]"
+
+        p_table.add_row(email_str, q_pct, reset_str, role, status_flag)
+
+    console.print(Panel(p_table, border_style="blue"))
+    console.print("[dim]Commands: `agy-token balance on|off`, `agy-token balance strategy watermark|expiry_first|round_robin`, `agy-token balance rotate`[/dim]\n")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="agy-token",
@@ -965,6 +1132,20 @@ def main():
     p_doctor.add_argument("--fix", action="store_true", help="Automatically repair file permissions, refresh stale tokens, and restart services")
     p_doctor.add_argument("--no-network", action="store_true", help="Skip remote Google OAuth token validation")
 
+    # balance
+    p_balance = subparsers.add_parser("balance", help="Manage multi-account pool rotation & watermark balancing")
+    p_balance.add_argument("balance_action", nargs="?", default="status",
+                           choices=["status", "on", "enable", "off", "disable", "strategy", "rotate", "config"],
+                           help="Action to perform (default: status)")
+    p_balance.add_argument("extra_arg", nargs="?", default=None, help="Strategy name or value")
+    p_balance.add_argument("--strategy", dest="strategy_val", choices=["watermark", "expiry_first", "round_robin", "reactive"], help="Strategy mode")
+    p_balance.add_argument("--spread", type=float, help="Watermark spread percentage (e.g. 20.0)")
+    p_balance.add_argument("--interval", type=int, help="Round-robin interval in minutes (e.g. 60)")
+    p_balance.add_argument("--expiry-window", type=int, help="Expiry first window in hours (e.g. 36)")
+    p_balance.add_argument("--min-quota", type=float, help="Minimum quota percentage for candidate eligibility (e.g. 5.0)")
+    p_balance.add_argument("--dry-run", action="store_true", help="Simulate rotation without executing switch")
+    p_balance.add_argument("--force", action="store_true", help="Bypass cooldown and balancer enabled check")
+
     args = parser.parse_args()
 
     # Default to status if no command given
@@ -987,7 +1168,8 @@ def main():
         "web": cmd_web,
         "switch": cmd_switch,
         "tray": cmd_tray,
-        "doctor": cmd_doctor
+        "doctor": cmd_doctor,
+        "balance": cmd_balance
     }
 
     func = cmd_map.get(args.command)

@@ -122,6 +122,60 @@
       background: rgba(251, 188, 4, 0.1);
       opacity: 0.7;
     }
+    .balancer-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      font-family: 'JetBrains Mono', monospace;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      border: 1px solid var(--surface-border);
+      background: rgba(255, 255, 255, 0.05);
+    }
+    .balancer-badge:hover {
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+    .balancer-active {
+      border-color: rgba(66, 133, 244, 0.5);
+      color: #8ab4f8;
+      background: rgba(66, 133, 244, 0.12);
+    }
+    .balancer-disabled {
+      border-color: rgba(255, 255, 255, 0.15);
+      color: var(--text-muted);
+      opacity: 0.6;
+    }
+    .balancer-card {
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--surface-border);
+      border-radius: 12px;
+      padding: 16px 20px;
+      margin-bottom: 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+    .strategy-select {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      color: var(--text-main);
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-family: inherit;
+      cursor: pointer;
+      outline: none;
+    }
+    .strategy-select:focus {
+      border-color: var(--accent);
+    }
     @keyframes pulse-red {
       0%, 100% { box-shadow: 0 0 0 0 rgba(234, 67, 53, 0.4); }
       50% { box-shadow: 0 0 0 6px rgba(234, 67, 53, 0); }
@@ -292,11 +346,36 @@
       <div class="controls">
         <div id="ipBadge" class="ip-badge" title="Click to view IP details">🌐 Checking IP...</div>
         <div id="shieldBadge" class="shield-badge" onclick="toggleShield()" title="Click to toggle IP Killswitch Shield">🛡️ Shield: Loading...</div>
+        <div id="balancerBadge" class="balancer-badge" onclick="toggleBalancer()" title="Click to toggle Auto-Balancer">🔄 Balancer: Loading...</div>
         <span id="lastUpdated">Checking...</span>
         <button onclick="loadData()">↻ Refresh</button>
         <button class="btn-switch" onclick="switchBest()">⚡ Auto-Switch to Best</button>
       </div>
     </header>
+
+    <div id="balancerCard" class="balancer-card" style="display:none;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <span style="font-size:22px;">🔄</span>
+        <div>
+          <div style="font-weight:700; font-size:14px; display:flex; align-items:center; gap:8px;">
+            Auto-Balancer & Account Pool Rotation
+            <span id="balancerStateBadge" class="status-pill status-healthy" style="font-size:11px;">ACTIVE</span>
+          </div>
+          <div id="balancerDesc" style="font-size:12px; color:var(--text-muted); margin-top:2px;">
+            Balanced leveling across all registered accounts.
+          </div>
+        </div>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <select id="strategySelect" class="strategy-select" onchange="updateBalancerStrategy(this.value)">
+          <option value="watermark">Watermark Leveling</option>
+          <option value="expiry_first">Reset Optimizer (Zero Waste)</option>
+          <option value="round_robin">Round-Robin Interval</option>
+          <option value="reactive">Reactive Fallback Only</option>
+        </select>
+        <button onclick="rotateBalancer()" style="padding:6px 14px; font-size:12px;">🔀 Rotate Pool Now</button>
+      </div>
+    </div>
 
     <div id="alertContainer"></div>
     <div id="accountsContainer">Loading account quota status...</div>
@@ -358,6 +437,44 @@
         shieldBadge.title = isShieldOn
           ? 'IP Shield ACTIVE: Will automatically terminate Antigravity if VPN disconnects.\nClick to toggle.'
           : 'IP Shield DISABLED.\nClick to toggle.';
+      }
+
+      // Update Balancer Badge & Card
+      const balancerBadge = document.getElementById('balancerBadge');
+      const balancerCard = document.getElementById('balancerCard');
+      const balCfg = data.balancer;
+      if (balancerBadge && balCfg) {
+        const isBalOn = Boolean(balCfg.enabled);
+        const strat = balCfg.strategy || 'watermark';
+        const stratName = strat.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
+        balancerBadge.className = 'balancer-badge ' + (isBalOn ? 'balancer-active' : 'balancer-disabled');
+        balancerBadge.innerHTML = `🔄 Balancer: <span>${isBalOn ? stratName : 'OFF'}</span>`;
+        balancerBadge.title = isBalOn
+          ? `Auto-Balancer ACTIVE (${stratName}): Optimizing account pool in background.\nClick to toggle.`
+          : 'Auto-Balancer DISABLED.\nClick to toggle.';
+
+        if (balancerCard) {
+          balancerCard.style.display = 'flex';
+          const stateBadge = document.getElementById('balancerStateBadge');
+          if (stateBadge) {
+            stateBadge.className = 'status-pill ' + (isBalOn ? 'status-healthy' : 'status-low');
+            stateBadge.textContent = isBalOn ? 'ACTIVE' : 'OFF';
+          }
+          const stratSelect = document.getElementById('strategySelect');
+          if (stratSelect && stratSelect.value !== strat) {
+            stratSelect.value = strat;
+          }
+          const descEl = document.getElementById('balancerDesc');
+          if (descEl) {
+            const descs = {
+              'watermark': `Watermark Leveling: Maintains even quota spread (threshold: ${balCfg.watermark_spread_pct || 20}% difference).`,
+              'expiry_first': `Reset Optimizer: Burns accounts whose weekly resets occur soonest (window: ${balCfg.expiry_window_hours || 36}h).`,
+              'round_robin': `Round-Robin: Rotates in circular order every ${balCfg.round_robin_interval_minutes || 60} minutes.`,
+              'reactive': 'Reactive Fallback: Only switches when an active session hits 0% quota.'
+            };
+            descEl.textContent = descs[strat] || 'Automatic account rotation.';
+          }
+        }
       }
 
       const alertContainer = document.getElementById('alertContainer');
@@ -540,6 +657,52 @@
         await loadData();
       } catch (err) {
         alert('Failed to toggle shield: ' + err.message);
+      }
+    }
+
+    async function toggleBalancer() {
+      try {
+        const currentResp = await fetch('/api/balancer');
+        const currentData = await currentResp.json();
+        const newState = !Boolean(currentData.config?.enabled);
+        await fetch('/api/balancer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: newState })
+        });
+        await loadData();
+      } catch (err) {
+        alert('Failed to toggle balancer: ' + err.message);
+      }
+    }
+
+    async function updateBalancerStrategy(strategy) {
+      try {
+        await fetch('/api/balancer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ strategy: strategy })
+        });
+        await loadData();
+      } catch (err) {
+        alert('Failed to update strategy: ' + err.message);
+      }
+    }
+
+    async function rotateBalancer() {
+      const alertContainer = document.getElementById('alertContainer');
+      alertContainer.innerHTML = `<div class="alert-banner" style="background:#1a2333; border-color:#4285f4;"><span>⏳</span> <div>Evaluating pool strategy and rotating account...</div></div>`;
+      try {
+        const resp = await fetch('/api/balancer/rotate', { method: 'POST' });
+        const res = await resp.json();
+        if (res.triggered) {
+          alert(`✓ ${res.message}`);
+        } else {
+          alert(`Notice: ${res.message}`);
+        }
+        await loadData();
+      } catch (err) {
+        alert('Rotation error: ' + err.message);
       }
     }
 

@@ -197,6 +197,34 @@ def check_system_environment() -> List[Dict[str, Any]]:
             "details": f"Could not inspect shield config: {e}"
         })
 
+    # 8. Auto-Balancer Pool Readiness
+    try:
+        from . import balancer
+        bal_cfg = balancer.load_balancer_config()
+        is_bal_on = bal_cfg.get("enabled", False)
+        strat = bal_cfg.get("strategy", "watermark")
+        registered = accounts.load_accounts()
+        ready_cnt = sum(1 for em in registered if switcher.get_account_session_dir(em))
+
+        if is_bal_on:
+            results.append({
+                "component": "Auto-Balancer Pool",
+                "status": "PASS",
+                "details": f"ACTIVE [Strategy: {strat.title()}] - {ready_cnt} switchable account(s) in pool"
+            })
+        else:
+            results.append({
+                "component": "Auto-Balancer Pool",
+                "status": "PASS" if ready_cnt >= 2 else "WARN",
+                "details": f"STANDBY [Strategy: {strat.title()}] - {ready_cnt} switchable account(s) in pool (enable via: agy-token balance on)"
+            })
+    except Exception as e:
+        results.append({
+            "component": "Auto-Balancer Pool",
+            "status": "WARN",
+            "details": f"Could not inspect balancer: {e}"
+        })
+
     return results
 
 

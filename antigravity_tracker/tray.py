@@ -20,9 +20,10 @@ try:
     from . import notifier
     from . import geo
     from . import shield
+    from . import balancer
 except (ImportError, ValueError):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from antigravity_tracker import accounts, quota, lifecycle, switcher, failover, notifier, geo, shield
+    from antigravity_tracker import accounts, quota, lifecycle, switcher, failover, notifier, geo, shield, balancer
 
 ICON_CACHE_DIR = os.path.expanduser("~/.config/antigravity-token-tracker/icons")
 TRAY_LOCK_FILE = os.path.expanduser("~/.config/antigravity-token-tracker/tray.lock")
@@ -439,6 +440,38 @@ class TrayApplet:
         ), signature="(ia{sv}av)"))
         item_id += 1
 
+        # 4. Auto-Balancer Section
+        bal_cfg = balancer.load_balancer_config()
+        is_bal_on = bal_cfg.get("enabled", False)
+        strat_key = bal_cfg.get("strategy", "watermark")
+        strat_name = strat_key.replace("_", " ").title()
+        bal_icon = "🔄" if is_bal_on else "⚪"
+        bal_state = "ACTIVE" if is_bal_on else "OFF"
+        bal_label = f"{bal_icon} Auto-Balancer: [{bal_state} - {strat_name}] (Click to toggle)"
+        children.append(dbus.Struct((
+            dbus.Int32(item_id),
+            dbus.Dictionary({"label": dbus.String(bal_label), "enabled": dbus.Boolean(True)}, signature="sv"),
+            dbus.Array([], signature="v")
+        ), signature="(ia{sv}av)"))
+        self.menu_action_map[item_id] = ("toggle_balancer", None)
+        item_id += 1
+
+        children.append(dbus.Struct((
+            dbus.Int32(item_id),
+            dbus.Dictionary({"label": dbus.String("🔀 Rotate Account Now"), "enabled": dbus.Boolean(True)}, signature="sv"),
+            dbus.Array([], signature="v")
+        ), signature="(ia{sv}av)"))
+        self.menu_action_map[item_id] = ("rotate_balancer", None)
+        item_id += 1
+
+        # Separator
+        children.append(dbus.Struct((
+            dbus.Int32(item_id),
+            dbus.Dictionary({"type": dbus.String("separator")}, signature="sv"),
+            dbus.Array([], signature="v")
+        ), signature="(ia{sv}av)"))
+        item_id += 1
+
         # 4. Quick Actions
         children.append(dbus.Struct((
             dbus.Int32(item_id),
@@ -526,6 +559,38 @@ class TrayApplet:
                 urgency="normal"
             )
             GLib.idle_add(lambda: self.refresh_data(force=False))
+
+        elif action == "toggle_balancer":
+            cfg = balancer.load_balancer_config()
+            new_state = not cfg.get("enabled", False)
+            cfg["enabled"] = new_state
+            balancer.save_balancer_config(cfg)
+            status_desc = f"ENABLED ({cfg.get('strategy', 'watermark').title()})" if new_state else "DISABLED"
+            notifier.send_desktop_notification(
+                "🔄 Auto-Balancer",
+                f"Multi-account pool rotation is now {status_desc}.",
+                urgency="normal"
+            )
+            GLib.idle_add(lambda: self.refresh_data(force=False))
+
+        elif action == "rotate_balancer":
+            notifier.send_desktop_notification(
+                "🔀 Evaluating Pool Rotation",
+                "Checking account pool and rotating session...",
+                urgency="normal"
+            )
+
+            def do_rotate():
+                res = balancer.evaluate_and_execute_balancer(self.analyzed_quotas, force=True)
+                if not res.get("triggered"):
+                    notifier.send_desktop_notification(
+                        "🔄 Pool Already Optimal",
+                        res.get("message", "No rotation needed."),
+                        urgency="normal"
+                    )
+                GLib.idle_add(lambda: self.refresh_data(force=True))
+
+            threading.Thread(target=do_rotate, daemon=True).start()
 
         elif action == "refresh":
             threading.Thread(target=lambda: self.refresh_data(force=True), daemon=True).start()

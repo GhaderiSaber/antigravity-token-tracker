@@ -26,17 +26,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
             all_quotas = quota.fetch_all_accounts_quota(force_refresh=False)
             analyzed = {e: lifecycle.analyze_account_lifecycle(q) for e, q in all_quotas.items()}
             rec = lifecycle.compute_switching_recommendation(analyzed)
-            from antigravity_tracker import failover, geo, shield
+            from antigravity_tracker import failover, geo, shield, balancer
             failover_info = failover.get_failover_status(analyzed)
             geo_info = geo.get_ip_geo(force_refresh=False)
             shield_cfg = shield.load_shield_config()
+            bal_cfg = balancer.load_balancer_config()
+            bal_state = balancer.load_balancer_state()
 
             payload = {
                 "accounts": analyzed,
                 "recommendation": rec,
                 "failover": failover_info,
                 "geo": geo_info,
-                "shield": shield_cfg
+                "shield": shield_cfg,
+                "balancer": bal_cfg,
+                "balancer_state": bal_state
             }
 
             data = json.dumps(payload).encode("utf-8")
@@ -92,6 +96,56 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             self.wfile.write(json.dumps(geo_info).encode("utf-8"))
+
+        elif parsed.path == "/api/balancer":
+            from antigravity_tracker import balancer
+            if self.command == "POST":
+                try:
+                    length = int(self.headers.get("Content-Length", 0))
+                    if length > 0:
+                        body = json.loads(self.rfile.read(length).decode("utf-8"))
+                        cfg = balancer.load_balancer_config()
+                        if "enabled" in body:
+                            cfg["enabled"] = bool(body["enabled"])
+                        if "strategy" in body and body["strategy"] in balancer.SUPPORTED_STRATEGIES:
+                            cfg["strategy"] = body["strategy"]
+                        if "watermark_spread_pct" in body:
+                            cfg["watermark_spread_pct"] = float(body["watermark_spread_pct"])
+                        if "round_robin_interval_minutes" in body:
+                            cfg["round_robin_interval_minutes"] = int(body["round_robin_interval_minutes"])
+                        if "expiry_window_hours" in body:
+                            cfg["expiry_window_hours"] = int(body["expiry_window_hours"])
+                        balancer.save_balancer_config(cfg)
+                except Exception:
+                    pass
+
+            cfg = balancer.load_balancer_config()
+            state = balancer.load_balancer_state()
+            all_quotas = quota.fetch_all_accounts_quota(force_refresh=False)
+            analyzed = {e: lifecycle.analyze_account_lifecycle(q) for e, q in all_quotas.items()}
+            pool = balancer.get_eligible_pool_accounts(analyzed, min_quota_pct=cfg.get("min_quota_pct", 5.0))
+
+            resp_payload = {
+                "config": cfg,
+                "state": state,
+                "pool": pool
+            }
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(json.dumps(resp_payload).encode("utf-8"))
+
+        elif parsed.path == "/api/balancer/rotate":
+            from antigravity_tracker import balancer
+            all_quotas = quota.fetch_all_accounts_quota(force_refresh=False)
+            analyzed = {e: lifecycle.analyze_account_lifecycle(q) for e, q in all_quotas.items()}
+            res = balancer.evaluate_and_execute_balancer(analyzed, force=True)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(json.dumps(res).encode("utf-8"))
 
         elif parsed.path == "/api/switch-best":
             accounts.sync_from_antigravity()
