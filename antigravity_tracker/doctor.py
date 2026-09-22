@@ -57,18 +57,29 @@ def check_system_environment() -> List[Dict[str, Any]]:
             "details": f"Could not access Linux Keyring: {e}"
         })
 
-    # 3. StatusNotifierWatcher (Ubuntu Top-Bar AppIndicator)
+    # 3. StatusNotifierWatcher (Ubuntu Top-Bar AppIndicator) & Singleton Lock
     try:
         import dbus
         bus = dbus.SessionBus()
         watcher = bus.get_object("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher")
         iface = dbus.Interface(watcher, "org.freedesktop.DBus.Properties")
         items = list(iface.Get("org.kde.StatusNotifierWatcher", "RegisteredStatusNotifierItems"))
-        has_our_tray = any("antigravity" in str(it).lower() or "org.kde.statusnotifieritem" in str(it).lower() for it in items)
-        status = "PASS"
-        detail = f"Active ({len(items)} items registered in top bar)"
-        if has_our_tray:
-            detail += " [Antigravity Tray registered]"
+        our_tray_items = [str(it) for it in items if "antigravity" in str(it).lower() or "org.kde.statusnotifieritem" in str(it).lower()]
+        has_our_tray = len(our_tray_items) > 0
+
+        from . import tray
+        lock_fd, active_pid = tray.acquire_tray_lock()
+        if lock_fd is not None:
+            tray.release_tray_lock(lock_fd)
+            status = "PASS" if has_our_tray else "WARN"
+            detail = "Watcher ready (no tray currently running; launch via: agy-token tray)"
+        else:
+            status = "PASS"
+            detail = f"Active [Singleton PID: {active_pid}] ({len(items)} items in top bar)"
+            if len(our_tray_items) > 1:
+                status = "WARN"
+                detail += f" - Notice: {len(our_tray_items)} applet instances detected"
+
         results.append({
             "component": "Top-Bar AppIndicator",
             "status": status,

@@ -544,41 +544,45 @@ def cmd_daemon(args):
         pass
 
     if use_tray:
-        console.print("[bold green]🖥️ Top-Bar System Tray Applet ACTIVE[/bold green]")
         from . import tray
         applet = tray.TrayApplet(update_interval=interval)
+        if not applet.acquire_lock():
+            console.print("[yellow]⚠️ Another tray indicator instance is already active. Continuing daemon in background mode without duplicate tray.[/yellow]")
+            use_tray = False
+        else:
+            console.print("[bold green]🖥️ Top-Bar System Tray Applet ACTIVE[/bold green]")
 
-        def daemon_cycle():
-            try:
-                accounts.sync_from_antigravity()
-                all_quotas = quota.fetch_all_accounts_quota(force_refresh=True)
-                analyzed = {e: lifecycle.analyze_account_lifecycle(q) for e, q in all_quotas.items()}
-                lifecycle.log_lifecycle_snapshot(analyzed)
-                notifier.check_and_notify_lifecycle_events(analyzed)
+            def daemon_cycle():
+                try:
+                    accounts.sync_from_antigravity()
+                    all_quotas = quota.fetch_all_accounts_quota(force_refresh=True)
+                    analyzed = {e: lifecycle.analyze_account_lifecycle(q) for e, q in all_quotas.items()}
+                    lifecycle.log_lifecycle_snapshot(analyzed)
+                    notifier.check_and_notify_lifecycle_events(analyzed)
 
-                # Enforce IP Killswitch Shield
-                shield.evaluate_and_enforce_shield()
+                    # Enforce IP Killswitch Shield
+                    shield.evaluate_and_enforce_shield()
 
-                if auto_switch:
-                    res = failover.evaluate_and_execute_failover(
-                        analyzed,
-                        threshold=threshold,
-                        restart=not no_restart,
-                        cooldown_seconds=cooldown
-                    )
-                    if res.get("triggered"):
-                        console.print(f"[bold green]⚡ Auto-Failover: {res.get('message')}[/bold green]")
-                    elif res.get("reason") in ("COOLDOWN", "ALL_ACCOUNTS_DEPLETED", "SWITCH_FAILED"):
-                        console.print(f"[dim]Failover notice: {res.get('message')}[/dim]")
-                applet.refresh_data(force=False)
-            except Exception as e:
-                console.print(f"[red]Daemon error during cycle: {e}[/red]")
-            return True
+                    if auto_switch:
+                        res = failover.evaluate_and_execute_failover(
+                            analyzed,
+                            threshold=threshold,
+                            restart=not no_restart,
+                            cooldown_seconds=cooldown
+                        )
+                        if res.get("triggered"):
+                            console.print(f"[bold green]⚡ Auto-Failover: {res.get('message')}[/bold green]")
+                        elif res.get("reason") in ("COOLDOWN", "ALL_ACCOUNTS_DEPLETED", "SWITCH_FAILED"):
+                            console.print(f"[dim]Failover notice: {res.get('message')}[/dim]")
+                    applet.refresh_data(force=False)
+                except Exception as e:
+                    console.print(f"[red]Daemon error during cycle: {e}[/red]")
+                return True
 
-        from gi.repository import GLib
-        GLib.timeout_add_seconds(interval, daemon_cycle)
-        applet.start()
-        return 0
+            from gi.repository import GLib
+            GLib.timeout_add_seconds(interval, daemon_cycle)
+            applet.start()
+            return 0
 
     try:
         while True:

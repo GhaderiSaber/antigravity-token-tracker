@@ -73,11 +73,12 @@ EOF
 
 echo "✓ Created systemd service template: $USER_SERVICE_FILE"
 
-# 5b. Install autostart desktop entry for top-bar tray
-mkdir -p "$HOME/.config/autostart"
-if [ -f "$SCRIPT_DIR/antigravity-token-tracker-tray.desktop" ]; then
-    cp "$SCRIPT_DIR/antigravity-token-tracker-tray.desktop" "$HOME/.config/autostart/"
-    echo "✓ Installed desktop autostart entry in ~/.config/autostart/"
+# 5b. Autostart & Tray Deduplication
+# Since the systemd service runs the unified daemon + tray indicator with single-instance locking,
+# clean up any legacy standalone autostart desktop entry so GNOME doesn't spawn redundant processes.
+if [ -f "$HOME/.config/autostart/antigravity-token-tracker-tray.desktop" ]; then
+    rm -f "$HOME/.config/autostart/antigravity-token-tracker-tray.desktop"
+    echo "✓ Cleaned up redundant autostart entry ~/.config/autostart/antigravity-token-tracker-tray.desktop (systemd daemon handles tray)"
 fi
 
 # 6. Initial Account Discovery

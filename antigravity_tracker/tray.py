@@ -25,6 +25,56 @@ except (ImportError, ValueError):
     from antigravity_tracker import accounts, quota, lifecycle, switcher, failover, notifier, geo, shield
 
 ICON_CACHE_DIR = os.path.expanduser("~/.config/antigravity-token-tracker/icons")
+TRAY_LOCK_FILE = os.path.expanduser("~/.config/antigravity-token-tracker/tray.lock")
+
+
+def acquire_tray_lock(lock_path: Optional[str] = None) -> Tuple[Optional[int], Optional[int]]:
+    """Attempts to acquire an exclusive, non-blocking lock on the tray lockfile.
+
+    Returns:
+        (fd, None) if lock acquired successfully.
+        (None, existing_pid) if another process already holds the lock.
+    """
+    path = lock_path or TRAY_LOCK_FILE
+    lock_dir = os.path.dirname(path)
+    os.makedirs(lock_dir, mode=0o700, exist_ok=True)
+
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    except OSError:
+        return None, None
+
+    try:
+        import fcntl
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # We got the lock! Truncate and write our PID
+        os.ftruncate(fd, 0)
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.write(fd, f"{os.getpid()}\n".encode("utf-8"))
+        return fd, None
+    except (BlockingIOError, OSError):
+        # Locked by another process. Read its PID if available
+        existing_pid = None
+        try:
+            with open(path, "r") as f:
+                content = f.read().strip()
+                if content.isdigit():
+                    existing_pid = int(content)
+        except Exception:
+            pass
+        os.close(fd)
+        return None, existing_pid
+
+
+def release_tray_lock(fd: Optional[int], lock_path: Optional[str] = None):
+    """Releases and closes the lock file descriptor."""
+    if fd is not None:
+        try:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+        except Exception:
+            pass
 
 
 def generate_tray_icon(pct: float, is_exhausted: bool = False) -> str:
@@ -157,8 +207,10 @@ class DBusMenu(dbus.service.Object):
 
 
 class TrayApplet:
-    def __init__(self, update_interval: int = 60):
+    def __init__(self, update_interval: int = 60, lock_path: Optional[str] = None):
         self.update_interval = update_interval
+        self.lock_path = lock_path
+        self.lock_fd: Optional[int] = None
         self.loop = None
         self.session_bus = None
         self.sni_object = None
@@ -168,6 +220,27 @@ class TrayApplet:
         self.geo_info: Dict[str, Any] = {}
         self.last_is_restricted = False
         self.menu_action_map: Dict[int, Any] = {}
+
+    def acquire_lock(self) -> bool:
+        """Attempts to acquire the singleton process lock.
+
+        Returns True if successfully acquired, False otherwise.
+        """
+        if self.lock_fd is not None:
+            return True
+        fd, existing_pid = acquire_tray_lock(self.lock_path)
+        if fd is None:
+            pid_str = f" (PID {existing_pid})" if existing_pid else ""
+            print(f"[Tray] Another tray indicator instance is already active{pid_str}. Exiting duplicate.")
+            return False
+        self.lock_fd = fd
+        return True
+
+    def release_lock(self):
+        """Releases the singleton process lock if currently held."""
+        if self.lock_fd is not None:
+            release_tray_lock(self.lock_fd, self.lock_path)
+            self.lock_fd = None
 
     def get_active_summary(self) -> str:
         """Returns brief summary for tooltip."""
@@ -459,11 +532,19 @@ class TrayApplet:
 
         elif action == "quit":
             print("[Tray] Quitting applet...")
+            self.release_lock()
             if self.loop:
                 self.loop.quit()
 
-    def start(self):
-        """Initializes and runs the D-Bus StatusNotifierItem service loop."""
+    def start(self) -> bool:
+        """Initializes and runs the D-Bus StatusNotifierItem service loop.
+
+        Returns True if the loop ran to completion, False if the lock was not acquired.
+        """
+        if self.lock_fd is None:
+            if not self.acquire_lock():
+                return False
+
         try:
             import web_server
             web_server.start_background_server(port=8765)
@@ -501,11 +582,14 @@ class TrayApplet:
             self.loop.run()
         except KeyboardInterrupt:
             print("\n[Tray] Stopped.")
+        finally:
+            self.release_lock()
+        return True
 
 
-def run_tray(interval: int = 60):
-    applet = TrayApplet(update_interval=interval)
-    applet.start()
+def run_tray(interval: int = 60, lock_path: Optional[str] = None) -> bool:
+    applet = TrayApplet(update_interval=interval, lock_path=lock_path)
+    return applet.start()
 
 
 if __name__ == "__main__":
