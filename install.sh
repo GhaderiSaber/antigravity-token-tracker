@@ -21,13 +21,24 @@ PY_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_i
 echo "✓ Found Python $PY_VER"
 
 # 2. Install Python Dependencies
-echo "📦 Installing required dependencies (rich)..."
-if command -v pip3 &>/dev/null; then
-    python3 -m pip install --user -r "$SCRIPT_DIR/requirements.txt" --quiet
-elif command -v pip &>/dev/null; then
-    pip install --user -r "$SCRIPT_DIR/requirements.txt" --quiet
+echo "📦 Checking required dependencies (rich)..."
+if python3 -c "import rich" &>/dev/null; then
+    echo "✓ Required dependencies already satisfied (rich found)."
+elif [ -n "$VIRTUAL_ENV" ]; then
+    echo "📦 Installing dependencies into active virtual environment..."
+    python3 -m pip install -r "$SCRIPT_DIR/requirements.txt" --quiet
+    echo "✓ Installed required dependencies into virtual environment."
+elif python3 -m pip install --user -r "$SCRIPT_DIR/requirements.txt" --quiet 2>/dev/null; then
+    echo "✓ Installed required dependencies."
+elif python3 -m pip install --user --break-system-packages -r "$SCRIPT_DIR/requirements.txt" --quiet 2>/dev/null; then
+    echo "✓ Installed required dependencies (--break-system-packages)."
 else
-    echo "⚠️  Warning: pip was not found. Attempting to run with existing Python modules..."
+    echo "⚠️  Could not automatically install dependencies due to system package management restrictions (PEP 668)."
+    echo "   Please install 'rich' via your package manager:"
+    echo "     sudo apt install python3-rich"
+    echo "   or run:"
+    echo "     pip install --user --break-system-packages -r requirements.txt"
+    exit 1
 fi
 
 # 3. Create CLI symlink in ~/.local/bin
