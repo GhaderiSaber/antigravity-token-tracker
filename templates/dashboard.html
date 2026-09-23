@@ -210,6 +210,62 @@
       opacity: 0.9;
       transform: translateY(-1px);
     }
+    .switch-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255, 255, 255, 0.04);
+      padding: 4px;
+      border-radius: 10px;
+      border: 1px solid var(--surface-border);
+    }
+    .btn-switch-both {
+      background: linear-gradient(135deg, #4285f4, #9b51e0);
+      color: white;
+      border: none;
+      font-weight: 600;
+      font-size: 12px;
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-switch-both:hover {
+      opacity: 0.9;
+      transform: translateY(-1px);
+    }
+    .btn-switch-surface {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-main);
+      border: 1px solid var(--surface-border);
+      font-weight: 600;
+      font-size: 12px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-switch-surface:hover {
+      background: rgba(66, 133, 244, 0.15);
+      border-color: var(--accent);
+      color: #8ab4f8;
+      transform: translateY(-1px);
+    }
+    .btn-switch-single {
+      background: rgba(66, 133, 244, 0.12);
+      border: 1px solid rgba(66, 133, 244, 0.4);
+      color: #8ab4f8;
+      font-weight: 600;
+      font-size: 12px;
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-switch-single:hover {
+      background: rgba(66, 133, 244, 0.25);
+      transform: translateY(-1px);
+    }
     .account-card {
       background: var(--surface);
       border: 1px solid var(--surface-border);
@@ -579,8 +635,24 @@
       alertContainer.innerHTML = alertHtml;
 
       let html = '';
-      for (const [email, acc] of Object.entries(accounts)) {
-        const isCurrentApp = Boolean(acc.is_current_desktop_session);
+      const sortedAccounts = Object.entries(accounts).sort((a, b) => {
+        const getPrio = (acc) => {
+          if (acc.is_current_desktop_session && acc.is_current_ide_session) return 0;
+          if (acc.is_current_desktop_session) return 1;
+          if (acc.is_current_ide_session) return 2;
+          return 3;
+        };
+        const pA = getPrio(a[1]);
+        const pB = getPrio(b[1]);
+        if (pA !== pB) return pA - pB;
+        const remA = (a[1].groups && a[1].groups[0] && a[1].groups[0].weekly) ? a[1].groups[0].weekly.remainingPercent : 0;
+        const remB = (b[1].groups && b[1].groups[0] && b[1].groups[0].weekly) ? b[1].groups[0].weekly.remainingPercent : 0;
+        return remB - remA;
+      });
+
+      for (const [email, acc] of sortedAccounts) {
+        const isCurrentDesktop = Boolean(acc.is_current_desktop_session);
+        const isCurrentIde = Boolean(acc.is_current_ide_session);
         let activeBadge = '';
         if (acc.is_current_desktop_session && acc.is_current_ide_session) {
           activeBadge = '<div class="active-badge"><div class="active-dot"></div> Active (App + IDE)</div>';
@@ -622,6 +694,33 @@
           `;
         }
 
+        let switchActionHtml = '';
+        if (isCurrentDesktop && isCurrentIde) {
+          switchActionHtml = '<div style="font-size:12px; color:var(--green); font-weight:600; display:flex; align-items:center; gap:6px;"><span>✓</span> Active (App + IDE)</div>';
+        } else if (isCurrentDesktop && !isCurrentIde) {
+          switchActionHtml = `
+            <div class="switch-group">
+              <span style="font-size:11px; color:#81c995; font-weight:600; padding:0 6px;">📱 App Active</span>
+              <button class="btn-switch-single" onclick="switchAccount('${acc.email}', 'ide')" title="Switch IDE to this account (Desktop App remains active)">💻 Switch IDE Here</button>
+            </div>
+          `;
+        } else if (!isCurrentDesktop && isCurrentIde) {
+          switchActionHtml = `
+            <div class="switch-group">
+              <span style="font-size:11px; color:#8ab4f8; font-weight:600; padding:0 6px;">💻 IDE Active</span>
+              <button class="btn-switch-single" onclick="switchAccount('${acc.email}', 'desktop')" title="Switch Desktop App to this account (IDE remains active)">📱 Switch App Here</button>
+            </div>
+          `;
+        } else {
+          switchActionHtml = `
+            <div class="switch-group">
+              <button class="btn-switch-both" onclick="switchAccount('${acc.email}', 'both')" title="Switch both Desktop App and IDE to ${acc.email}">⚡ Both</button>
+              <button class="btn-switch-surface" onclick="switchAccount('${acc.email}', 'desktop')" title="Switch Desktop App only (leave IDE untouched)">📱 App</button>
+              <button class="btn-switch-surface" onclick="switchAccount('${acc.email}', 'ide')" title="Switch IDE only (leave Desktop App untouched)">💻 IDE</button>
+            </div>
+          `;
+        }
+
         html += `
           <div class="account-card">
             <div class="account-header">
@@ -631,9 +730,7 @@
                 ${activeBadge}
                 ${burnBadge}
               </div>
-              ${!isCurrentApp ? `
-                <button class="btn-switch" onclick="switchAccount('${acc.email}')">⚡ Switch to this Account</button>
-              ` : ''}
+              ${switchActionHtml}
             </div>
 
             <div class="grid">
@@ -664,16 +761,14 @@
                 <div class="progress-bar-fill" style="width: ${wPct}%; background-color: ${getBarColor(wPct)};"></div>
               </div>
 
-              ${w ? `
-              <div class="countdown-box">
-                <span>Weekly Refresh:</span>
-                <span class="countdown-val">in ${w.countdown}</span>
+              <div class="countdown-row">
+                <span>Reset: ${w ? w.countdown : 'N/A'}</span>
+                <span>${w && w.resetTime ? w.resetTime.replace('T', ' ').substring(0, 16) + ' UTC' : ''}</span>
               </div>
-              ` : ''}
 
-              <div style="margin-top: 16px;">
+              <div class="meter-sub">
                 <div class="meter-label">
-                  <span>5-Hour Rolling Limit</span>
+                  <span>5-Hour Limit</span>
                   <strong>${fPct.toFixed(1)}%</strong>
                 </div>
                 <div class="progress-bar-bg">
@@ -693,12 +788,22 @@
       document.getElementById('accountsContainer').innerHTML = html;
     }
 
-    async function switchAccount(email) {
-      if (!confirm(`Switch active session to ${email}? Antigravity will restart.`)) return;
+    async function switchAccount(email, surface = 'both') {
+      let surfaceName = "App + IDE";
+      let restartNote = "Antigravity Desktop App will restart.";
+      if (surface === 'desktop' || surface === 'app') {
+        surfaceName = "Desktop App only";
+        restartNote = "Antigravity Desktop App will restart (IDE editor remains untouched).";
+      } else if (surface === 'ide') {
+        surfaceName = "Antigravity IDE only";
+        restartNote = "IDE configuration will be updated (Desktop App remains untouched).";
+      }
+
+      if (!confirm(`Switch ${surfaceName} to ${email}?\n${restartNote}`)) return;
       const alertContainer = document.getElementById('alertContainer');
-      alertContainer.innerHTML = `<div class="alert-banner" style="background:#1a2333; border-color:#4285f4;"><span>⏳</span> <div>Switching session to ${email}... Restarting Antigravity...</div></div>`;
+      alertContainer.innerHTML = `<div class="alert-banner" style="background:#1a2333; border-color:#4285f4;"><span>⏳</span> <div>Switching ${surfaceName} to ${email}...</div></div>`;
       try {
-        const resp = await fetch(`/api/switch?email=${encodeURIComponent(email)}`);
+        const resp = await fetch(`/api/switch?email=${encodeURIComponent(email)}&surface=${encodeURIComponent(surface)}`);
         const res = await resp.json();
         if (res.success) {
           alert(`✓ ${res.message || 'Successfully switched!'}`);
