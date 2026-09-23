@@ -3,218 +3,439 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Antigravity Token & Quota Tracker</title>
+  <title>Antigravity Token & Quota Commander</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #0d0f12;
-      --surface: #15181e;
-      --surface-border: #262a34;
+      --bg: #090b0e;
+      --surface: #11141a;
+      --surface-card: #151821;
+      --surface-elevated: #1a1e29;
+      --surface-border: #232836;
+      --surface-border-light: #2e3446;
       --text-main: #f0f3f6;
       --text-muted: #8b949e;
+      --text-dim: #545d6e;
       --accent: #4285f4;
+      --accent-glow: rgba(66, 133, 244, 0.25);
+      --purple: #9b51e0;
       --green: #34a853;
+      --green-glow: rgba(52, 168, 83, 0.25);
       --yellow: #fbbc04;
+      --yellow-glow: rgba(251, 188, 4, 0.25);
       --red: #ea4335;
+      --red-glow: rgba(234, 67, 53, 0.25);
       --red-bg: rgba(234, 67, 53, 0.12);
       --green-bg: rgba(52, 168, 83, 0.12);
+      --blue-bg: rgba(66, 133, 244, 0.12);
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 14px;
+      --radius-xl: 18px;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       background-color: var(--bg);
       color: var(--text-main);
       font-family: 'Plus Jakarta Sans', sans-serif;
-      padding: 32px 24px;
+      padding: 28px 24px;
       min-height: 100vh;
+      line-height: 1.5;
     }
     .container {
-      max-width: 1000px;
+      max-width: 1200px;
       margin: 0 auto;
     }
+
+    /* Header & Navigation */
     header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 32px;
-      padding-bottom: 20px;
+      margin-bottom: 24px;
+      padding-bottom: 18px;
       border-bottom: 1px solid var(--surface-border);
+      flex-wrap: wrap;
+      gap: 16px;
     }
     .brand {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 14px;
     }
     .logo-badge {
-      width: 40px;
-      height: 40px;
+      width: 44px;
+      height: 44px;
       background: linear-gradient(135deg, #4285f4, #9b51e0);
-      border-radius: 10px;
+      border-radius: 12px;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 20px;
-      box-shadow: 0 4px 12px rgba(66, 133, 244, 0.3);
+      font-size: 22px;
+      box-shadow: 0 4px 16px var(--accent-glow);
     }
-    h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.5px; }
+    h1 { font-size: 22px; font-weight: 800; letter-spacing: -0.5px; }
     .subtitle { font-size: 13px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
     .controls {
       display: flex;
-      gap: 12px;
+      gap: 10px;
       align-items: center;
+      flex-wrap: wrap;
     }
-    .ip-badge {
-      display: flex;
+
+    /* Badges & Pills */
+    .badge {
+      display: inline-flex;
       align-items: center;
       gap: 6px;
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid var(--surface-border);
       padding: 6px 12px;
       border-radius: 20px;
       font-size: 12px;
       font-family: 'JetBrains Mono', monospace;
-      color: var(--text-muted);
+      font-weight: 600;
+      border: 1px solid var(--surface-border);
+      background: rgba(255, 255, 255, 0.04);
       cursor: pointer;
       transition: all 0.2s ease;
+      text-decoration: none;
     }
-    .ip-badge:hover {
+    .badge:hover {
       border-color: var(--accent);
-      color: var(--text-main);
+      transform: translateY(-1px);
     }
-    .ip-safe {
+    .badge-safe {
       border-color: rgba(52, 168, 83, 0.4);
       color: #81c995;
       background: rgba(52, 168, 83, 0.1);
     }
-    .ip-restricted {
+    .badge-restricted {
       border-color: rgba(234, 67, 53, 0.6);
       color: #f28b82;
       background: rgba(234, 67, 53, 0.2);
       animation: pulse-red 2s infinite;
     }
-    .shield-badge {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 6px 12px;
-      border-radius: 20px;
-      font-size: 12px;
-      font-weight: 600;
-      font-family: 'JetBrains Mono', monospace;
-      cursor: pointer;
-      transition: all 0.2s ease;
-      border: 1px solid var(--surface-border);
-      background: rgba(255, 255, 255, 0.05);
-    }
-    .shield-badge:hover {
-      border-color: var(--accent);
-      transform: translateY(-1px);
-    }
-    .shield-active {
+    .badge-active {
       border-color: rgba(66, 133, 244, 0.5);
       color: #8ab4f8;
       background: rgba(66, 133, 244, 0.12);
     }
-    .shield-disabled {
-      border-color: rgba(251, 188, 4, 0.4);
-      color: #fdd663;
-      background: rgba(251, 188, 4, 0.1);
+    .badge-off {
+      border-color: rgba(255, 255, 255, 0.12);
+      color: var(--text-muted);
       opacity: 0.7;
     }
-    .balancer-badge {
-      display: flex;
+
+    @keyframes pulse-red {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(234, 67, 53, 0.4); }
+      50% { box-shadow: 0 0 0 6px rgba(234, 67, 53, 0); }
+    }
+
+    /* Buttons */
+    button {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      color: var(--text-main);
+      padding: 8px 14px;
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.2s ease;
+      display: inline-flex;
       align-items: center;
       gap: 6px;
-      padding: 6px 12px;
-      border-radius: 20px;
-      font-size: 12px;
-      font-weight: 600;
-      font-family: 'JetBrains Mono', monospace;
-      cursor: pointer;
-      transition: all 0.2s ease;
-      border: 1px solid var(--surface-border);
-      background: rgba(255, 255, 255, 0.05);
+      font-family: inherit;
     }
-    .balancer-badge:hover {
-      border-color: var(--accent);
+    button:hover { background: #1e232d; border-color: var(--surface-border-light); }
+    .btn-primary {
+      background: linear-gradient(135deg, #4285f4, #9b51e0);
+      color: white;
+      border: none;
+      box-shadow: 0 4px 12px var(--accent-glow);
+    }
+    .btn-primary:hover {
+      opacity: 0.92;
       transform: translateY(-1px);
     }
-    .balancer-active {
-      border-color: rgba(66, 133, 244, 0.5);
-      color: #8ab4f8;
-      background: rgba(66, 133, 244, 0.12);
-    }
-    .balancer-disabled {
-      border-color: rgba(255, 255, 255, 0.15);
-      color: var(--text-muted);
-      opacity: 0.6;
-    }
-    .balancer-card {
-      background: rgba(255, 255, 255, 0.02);
+    .btn-refresh {
+      background: var(--surface-elevated);
       border: 1px solid var(--surface-border);
-      border-radius: 12px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .btn-refresh.spinning .spin-icon {
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { 100% { transform: rotate(360deg); } }
+
+    /* Surface Alignment Strip */
+    .surface-sync-card {
+      background: linear-gradient(135deg, rgba(66, 133, 244, 0.12), rgba(155, 81, 224, 0.08));
+      border: 1px solid rgba(66, 133, 244, 0.35);
+      border-radius: var(--radius-lg);
+      padding: 14px 18px;
+      margin-bottom: 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .surface-sync-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #8ab4f8;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .surface-sync-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .btn-sync-action {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      font-size: 12px;
+      padding: 6px 12px;
+      border-radius: 6px;
+    }
+    .btn-sync-action:hover {
+      background: rgba(66, 133, 244, 0.3);
+      border-color: #8ab4f8;
+      color: #fff;
+    }
+
+    /* Upcoming Refills Timeline */
+    .timeline-section {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius-lg);
       padding: 16px 20px;
-      margin-bottom: 24px;
+      margin-bottom: 20px;
+    }
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+    .section-title {
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: -0.2px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .timeline-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 12px;
+    }
+    .timeline-card {
+      background: var(--surface-card);
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius-md);
+      padding: 12px 14px;
+      transition: all 0.2s ease;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .timeline-card:hover {
+      border-color: var(--accent);
+      transform: translateY(-2px);
+    }
+    .timeline-card.urgent {
+      border-color: rgba(52, 168, 83, 0.5);
+      background: linear-gradient(135deg, rgba(52, 168, 83, 0.08), var(--surface-card));
+    }
+    .timeline-email {
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .timeline-clock {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 14px;
+      font-weight: 700;
+      color: #8ab4f8;
+    }
+    .timeline-card.urgent .timeline-clock {
+      color: #81c995;
+    }
+    .timeline-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* Burn Rate & Runout Clock Banner */
+    .runout-banner {
+      background: linear-gradient(135deg, rgba(234, 67, 53, 0.14), rgba(251, 188, 4, 0.08));
+      border: 1px solid rgba(234, 67, 53, 0.4);
+      border-radius: var(--radius-lg);
+      padding: 16px 20px;
+      margin-bottom: 20px;
       display: flex;
       justify-content: space-between;
       align-items: center;
       flex-wrap: wrap;
       gap: 16px;
     }
-    .strategy-select {
-      background: var(--surface);
-      border: 1px solid var(--surface-border);
-      color: var(--text-main);
-      padding: 6px 12px;
-      border-radius: 8px;
-      font-size: 13px;
-      font-family: inherit;
-      cursor: pointer;
-      outline: none;
-    }
-    .strategy-select:focus {
-      border-color: var(--accent);
-    }
-    @keyframes pulse-red {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(234, 67, 53, 0.4); }
-      50% { box-shadow: 0 0 0 6px rgba(234, 67, 53, 0); }
-    }
-    button {
-      background: var(--surface);
-      border: 1px solid var(--surface-border);
-      color: var(--text-main);
-      padding: 8px 16px;
-      border-radius: 8px;
-      font-size: 13px;
-      cursor: pointer;
-      font-weight: 600;
-      transition: all 0.2s ease;
+    .runout-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #f28b82;
       display: flex;
       align-items: center;
       gap: 8px;
     }
-    button:hover { background: #1e222a; border-color: var(--accent); }
-    .btn-switch {
-      background: linear-gradient(135deg, #4285f4, #9b51e0);
-      color: white;
-      border: none;
-      font-weight: 600;
-      font-size: 13px;
-      padding: 8px 16px;
+    .runout-stats {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .runout-stat-box {
+      background: rgba(0, 0, 0, 0.25);
+      padding: 6px 12px;
       border-radius: 8px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+    }
+    .runout-stat-box strong {
+      color: #fff;
+    }
+
+    /* Filter & Search Bar */
+    .filter-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 18px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .filter-chips {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .chip {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      color: var(--text-muted);
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
       cursor: pointer;
-      transition: opacity 0.2s, transform 0.1s;
+      transition: all 0.2s;
     }
-    .btn-switch:hover {
-      opacity: 0.9;
-      transform: translateY(-1px);
+    .chip:hover, .chip.active {
+      background: var(--surface-elevated);
+      color: var(--text-main);
+      border-color: var(--accent);
     }
-    .switch-group {
+    .search-input {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      color: var(--text-main);
+      padding: 8px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-family: inherit;
+      outline: none;
+      width: 220px;
+      transition: all 0.2s;
+    }
+    .search-input:focus {
+      border-color: var(--accent);
+      width: 260px;
+      box-shadow: 0 0 10px var(--accent-glow);
+    }
+
+    /* Account Cards */
+    .account-card {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius-xl);
+      padding: 22px;
+      margin-bottom: 22px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+      transition: border-color 0.2s;
+    }
+    .account-card:hover {
+      border-color: var(--surface-border-light);
+    }
+    .account-card.is-active-card {
+      border-color: rgba(66, 133, 244, 0.4);
+      background: linear-gradient(180deg, rgba(66, 133, 244, 0.04), var(--surface));
+    }
+    .account-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 18px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .user-info {
       display: flex;
       align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .email { font-size: 17px; font-weight: 700; letter-spacing: -0.3px; }
+    .tier-badge {
+      padding: 4px 10px;
+      background: rgba(66, 133, 244, 0.12);
+      border: 1px solid rgba(66, 133, 244, 0.25);
+      color: #8ab4f8;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .active-badge {
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
       gap: 6px;
-      background: rgba(255, 255, 255, 0.04);
+    }
+    .active-badge.desktop-only {
+      background: rgba(52, 168, 83, 0.15);
+      border: 1px solid rgba(52, 168, 83, 0.4);
+      color: #81c995;
+    }
+    .active-badge.ide-only {
+      background: rgba(66, 133, 244, 0.15);
+      border: 1px solid rgba(66, 133, 244, 0.4);
+      color: #8ab4f8;
+    }
+    .active-badge.both-surfaces {
+      background: linear-gradient(135deg, rgba(52, 168, 83, 0.2), rgba(66, 133, 244, 0.2));
+      border: 1px solid rgba(52, 168, 83, 0.5);
+      color: #a8e6cf;
+    }
+    .active-dot { width: 6px; height: 6px; background: currentColor; border-radius: 50%; box-shadow: 0 0 6px currentColor; }
+
+    /* Surface Switch Buttons */
+    .switch-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255, 255, 255, 0.03);
       padding: 4px;
       border-radius: 10px;
       border: 1px solid var(--surface-border);
@@ -223,9 +444,9 @@
       background: linear-gradient(135deg, #4285f4, #9b51e0);
       color: white;
       border: none;
-      font-weight: 600;
-      font-size: 12px;
-      padding: 6px 12px;
+      font-weight: 700;
+      font-size: 11px;
+      padding: 5px 12px;
       border-radius: 6px;
       cursor: pointer;
       transition: all 0.2s;
@@ -239,8 +460,8 @@
       color: var(--text-main);
       border: 1px solid var(--surface-border);
       font-weight: 600;
-      font-size: 12px;
-      padding: 6px 10px;
+      font-size: 11px;
+      padding: 5px 10px;
       border-radius: 6px;
       cursor: pointer;
       transition: all 0.2s;
@@ -256,8 +477,8 @@
       border: 1px solid rgba(66, 133, 244, 0.4);
       color: #8ab4f8;
       font-weight: 600;
-      font-size: 12px;
-      padding: 6px 12px;
+      font-size: 11px;
+      padding: 5px 12px;
       border-radius: 6px;
       cursor: pointer;
       transition: all 0.2s;
@@ -266,142 +487,30 @@
       background: rgba(66, 133, 244, 0.25);
       transform: translateY(-1px);
     }
-    .account-card {
-      background: var(--surface);
-      border: 1px solid var(--surface-border);
-      border-radius: 16px;
-      padding: 24px;
-      margin-bottom: 24px;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.25);
-    }
-    .account-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 20px;
-    }
-    .user-info {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-    .email { font-size: 17px; font-weight: 700; }
-    .tier-badge {
-      padding: 4px 10px;
-      background: rgba(66, 133, 244, 0.15);
-      border: 1px solid rgba(66, 133, 244, 0.3);
-      color: #8ab4f8;
-      border-radius: 20px;
-      font-size: 12px;
-      font-weight: 600;
-    }
-    .active-badge {
-      padding: 4px 10px;
-      background: var(--green-bg);
-      border: 1px solid rgba(52, 168, 83, 0.3);
-      color: #81c995;
-      border-radius: 20px;
-      font-size: 12px;
-      font-weight: 600;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .active-dot { width: 6px; height: 6px; background: #34a853; border-radius: 50%; }
-    .burn-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 4px 10px;
-      border-radius: 20px;
-      font-size: 11px;
-      font-family: 'JetBrains Mono', monospace;
-      font-weight: 600;
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid var(--surface-border);
-      cursor: default;
-      transition: all 0.2s ease;
-    }
-    .burn-badge:hover {
-      transform: translateY(-1px);
-    }
-    .burn-high {
-      background: rgba(234, 67, 53, 0.15);
-      border-color: rgba(234, 67, 53, 0.4);
-      color: #f28b82;
-    }
-    .burn-active {
-      background: rgba(251, 188, 4, 0.15);
-      border-color: rgba(251, 188, 4, 0.4);
-      color: #fdd663;
-    }
-    .burn-moderate {
-      background: rgba(66, 133, 244, 0.15);
-      border-color: rgba(66, 133, 244, 0.4);
-      color: #8ab4f8;
-    }
-    .burn-idle {
-      background: rgba(255, 255, 255, 0.04);
-      border-color: rgba(255, 255, 255, 0.1);
-      color: var(--text-muted);
-    }
+
+    /* Model Groups Grid */
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
       gap: 16px;
+      margin-bottom: 16px;
     }
     .group-box {
-      background: #111317;
+      background: var(--surface-card);
       border: 1px solid var(--surface-border);
-      border-radius: 12px;
-      padding: 20px;
+      border-radius: var(--radius-lg);
+      padding: 18px 20px;
     }
     .group-title {
       font-size: 15px;
-      font-weight: 600;
-      margin-bottom: 16px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .meter-label {
-      display: flex;
-      justify-content: space-between;
-      font-size: 13px;
-      color: var(--text-muted);
-      margin-bottom: 8px;
-    }
-    .progress-bar-bg {
-      width: 100%;
-      height: 10px;
-      background: #20242c;
-      border-radius: 5px;
-      overflow: hidden;
-      margin-bottom: 12px;
-    }
-    .progress-bar-fill {
-      height: 100%;
-      border-radius: 5px;
-      transition: width 0.5s ease;
-    }
-    .countdown-box {
-      background: #171b22;
-      border: 1px solid #232731;
-      border-radius: 8px;
-      padding: 10px 12px;
-      margin-top: 12px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 12px;
-    }
-    .countdown-val {
-      color: #8ab4f8;
       font-weight: 700;
+      margin-bottom: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
     }
     .status-pill {
-      font-size: 11px;
+      font-size: 10px;
       font-weight: 700;
       padding: 3px 8px;
       border-radius: 6px;
@@ -411,19 +520,221 @@
     .status-exhausted { background: var(--red-bg); color: var(--red); border: 1px solid var(--red); }
     .status-healthy { background: var(--green-bg); color: var(--green); border: 1px solid var(--green); }
     .status-low { background: rgba(251, 188, 4, 0.15); color: var(--yellow); border: 1px solid var(--yellow); }
-    .alert-banner {
-      background: rgba(251, 188, 4, 0.1);
-      border: 1px solid rgba(251, 188, 4, 0.3);
-      color: #fdd663;
-      padding: 16px 20px;
-      border-radius: 12px;
-      margin-bottom: 24px;
-      font-size: 14px;
+
+    .meter-label {
       display: flex;
-      align-items: center;
-      gap: 12px;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+      font-weight: 500;
     }
-    #lastUpdated { font-size: 12px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+    .meter-label strong {
+      color: var(--text-main);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+    }
+    .progress-bar-bg {
+      width: 100%;
+      height: 10px;
+      background: #1c212c;
+      border-radius: 6px;
+      overflow: hidden;
+      margin-bottom: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.04);
+    }
+    .progress-bar-fill {
+      height: 100%;
+      border-radius: 6px;
+      transition: width 0.5s ease;
+    }
+
+    /* Fixed High-Contrast Reset Countdown Box */
+    .countdown-box {
+      background: #0d1016;
+      border: 1px solid var(--surface-border-light);
+      border-radius: var(--radius-md);
+      padding: 12px 14px;
+      margin-top: 10px;
+      margin-bottom: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .countdown-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-weight: 700;
+    }
+    .countdown-ticker {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 16px;
+      font-weight: 700;
+      color: #8ab4f8;
+      letter-spacing: -0.3px;
+    }
+    .countdown-ticker.urgent {
+      color: #81c995;
+    }
+    .countdown-time-sub {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* Model Breakdown Accordion */
+    .model-drawer {
+      border-top: 1px solid var(--surface-border);
+      padding-top: 14px;
+      margin-top: 6px;
+    }
+    .model-toggle-btn {
+      width: 100%;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius-sm);
+      padding: 8px 14px;
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 600;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .model-toggle-btn:hover {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-main);
+      border-color: var(--surface-border-light);
+    }
+    .model-list-container {
+      margin-top: 12px;
+      display: none;
+      animation: fadeIn 0.2s ease-in-out;
+    }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+    .model-search-box {
+      margin-bottom: 10px;
+      width: 100%;
+      background: var(--surface-card);
+      border: 1px solid var(--surface-border);
+      color: var(--text-main);
+      padding: 6px 12px;
+      border-radius: var(--radius-sm);
+      font-size: 12px;
+      outline: none;
+    }
+    .model-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .model-table th {
+      text-align: left;
+      padding: 6px 10px;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--surface-border);
+      font-size: 11px;
+    }
+    .model-table td {
+      padding: 8px 10px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    }
+    .model-id-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-main);
+    }
+    .model-id-badge.claude { background: rgba(155, 81, 224, 0.15); color: #d8b4fe; }
+    .model-id-badge.gemini { background: rgba(66, 133, 244, 0.15); color: #8ab4f8; }
+    .model-id-badge.gpt { background: rgba(52, 168, 83, 0.15); color: #81c995; }
+
+    /* Modal Styles */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      padding: 20px;
+    }
+    .modal-content {
+      background: var(--surface);
+      border: 1px solid var(--surface-border-light);
+      border-radius: var(--radius-xl);
+      max-width: 750px;
+      width: 100%;
+      max-height: 85vh;
+      overflow-y: auto;
+      padding: 24px;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 18px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--surface-border);
+    }
+    .modal-close {
+      background: none;
+      border: none;
+      font-size: 20px;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 4px 8px;
+    }
+    .modal-close:hover { color: var(--text-main); }
+    .diag-item {
+      background: var(--surface-card);
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius-md);
+      padding: 12px 16px;
+      margin-bottom: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .diag-pass { border-left: 4px solid var(--green); }
+    .diag-warn { border-left: 4px solid var(--yellow); }
+    .diag-fail { border-left: 4px solid var(--red); }
+
+    /* Trend Chart Card */
+    .chart-card {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius-lg);
+      padding: 18px 20px;
+      margin-bottom: 20px;
+    }
+    .chart-container {
+      width: 100%;
+      height: 160px;
+      position: relative;
+      margin-top: 10px;
+    }
+    svg.trend-svg {
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+    }
   </style>
 </head>
 <body>
@@ -432,35 +743,92 @@
       <div class="brand">
         <div class="logo-badge">⚡</div>
         <div>
-          <h1>Antigravity Token Tracker</h1>
+          <h1>Antigravity Token & Quota Commander</h1>
           <div class="subtitle">Weekly Account Token & Quota Lifecycle Monitor</div>
         </div>
       </div>
       <div class="controls">
-        <div id="ipBadge" class="ip-badge" title="Click to view IP details">🌐 Checking IP...</div>
-        <div id="shieldBadge" class="shield-badge" onclick="toggleShield()" title="Click to toggle IP Killswitch Shield">🛡️ Shield: Loading...</div>
-        <div id="balancerBadge" class="balancer-badge" onclick="toggleBalancer()" title="Click to toggle Auto-Balancer">🔄 Balancer: Loading...</div>
-        <span id="lastUpdated">Checking...</span>
-        <button onclick="loadData()">↻ Refresh</button>
-        <button class="btn-switch" onclick="switchBest()">⚡ Auto-Switch to Best</button>
+        <div id="ipBadge" class="badge" title="Click to view IP details">🌐 Checking IP...</div>
+        <div id="shieldBadge" class="badge" onclick="toggleShield()" title="Click to toggle IP Killswitch Shield">🛡️ Shield: Loading...</div>
+        <div id="balancerBadge" class="badge" onclick="toggleBalancer()" title="Click to toggle Auto-Balancer">🔄 Balancer: Loading...</div>
+        <button onclick="openDoctorModal()">🩺 Diagnostics</button>
+        <button id="refreshBtn" class="btn-refresh" onclick="forceRefreshData()">
+          <span class="spin-icon">↻</span>
+          <span>Refresh</span>
+        </button>
+        <button class="btn-primary" onclick="switchBest()">⚡ Auto-Switch Best</button>
       </div>
     </header>
 
-    <div id="balancerCard" class="balancer-card" style="display:none;">
+    <!-- Sub-bar with Live Local & UTC Clocks and Sync Timer -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; font-size:12px; color:var(--text-muted); font-family:'JetBrains Mono', monospace; flex-wrap:wrap; gap:8px;">
+      <div style="display:flex; align-items:center; gap:16px;">
+        <span>🕒 Local: <strong id="localClock" style="color:var(--text-main);">--:--:--</strong></span>
+        <span>🌐 UTC: <strong id="utcClock" style="color:var(--text-main);">--:--:--</strong></span>
+      </div>
+      <div style="display:flex; align-items:center; gap:14px;">
+        <span id="lastSyncedTimer">Synced: just now</span>
+        <label style="display:flex; align-items:center; gap:6px;">
+          <span>Auto-Sync:</span>
+          <select id="autoSyncInterval" onchange="updateSyncInterval(this.value)" style="background:var(--surface); border:1px solid var(--surface-border); color:var(--text-main); font-size:11px; border-radius:4px; padding:2px 6px;">
+            <option value="15">15s</option>
+            <option value="30" selected>30s</option>
+            <option value="60">60s</option>
+            <option value="0">Off</option>
+          </select>
+        </label>
+      </div>
+    </div>
+
+    <!-- Surface Alignment Strip (shown if Desktop App and IDE are split) -->
+    <div id="surfaceSyncContainer"></div>
+
+    <!-- Upcoming Quota Replenishment / Reset Timeline -->
+    <div class="timeline-section">
+      <div class="section-header">
+        <div class="section-title">
+          <span>📅 Upcoming Quota Resets & Refill Schedule</span>
+          <span id="timelineCounter" class="status-pill status-healthy" style="font-size:10px;">6 ACCOUNTS TRACKED</span>
+        </div>
+        <span style="font-size:12px; color:var(--text-muted);">Clocks tick live in your browser</span>
+      </div>
+      <div id="timelineGrid" class="timeline-grid">Loading reset schedules...</div>
+    </div>
+
+    <!-- Active Runout Clock / Burn Rate Warning -->
+    <div id="runoutContainer"></div>
+
+    <!-- 24-Hour Quota Burn Trend Chart -->
+    <div id="chartCard" class="chart-card" style="display:none;">
+      <div class="section-header">
+        <div class="section-title">
+          <span>📈 24-Hour Quota Burn Trend</span>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <span style="font-size:11px; color:var(--text-muted); font-family:'JetBrains Mono', monospace;" id="chartSnapshotsCount">0 snapshots</span>
+        </div>
+      </div>
+      <div class="chart-container" id="chartWrapper">
+        <svg class="trend-svg" id="trendSvg"></svg>
+      </div>
+    </div>
+
+    <!-- Auto-Balancer Card -->
+    <div id="balancerCard" style="display:none; background:var(--surface); border:1px solid var(--surface-border); border-radius:var(--radius-lg); padding:16px 20px; margin-bottom:20px; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px;">
       <div style="display:flex; align-items:center; gap:12px;">
-        <span style="font-size:22px;">🔄</span>
+        <span style="font-size:24px;">🔄</span>
         <div>
           <div style="font-weight:700; font-size:14px; display:flex; align-items:center; gap:8px;">
             Auto-Balancer & Account Pool Rotation
-            <span id="balancerStateBadge" class="status-pill status-healthy" style="font-size:11px;">ACTIVE</span>
+            <span id="balancerStateBadge" class="status-pill status-healthy">ACTIVE</span>
           </div>
           <div id="balancerDesc" style="font-size:12px; color:var(--text-muted); margin-top:2px;">
-            Balanced leveling across all registered accounts.
+            Leveling token consumption across registered accounts.
           </div>
         </div>
       </div>
       <div style="display:flex; align-items:center; gap:10px;">
-        <select id="strategySelect" class="strategy-select" onchange="updateBalancerStrategy(this.value)">
+        <select id="strategySelect" style="background:var(--surface-card); border:1px solid var(--surface-border); color:var(--text-main); padding:6px 12px; border-radius:8px; font-size:12px; cursor:pointer;" onchange="updateBalancerStrategy(this.value)">
           <option value="watermark">Watermark Leveling</option>
           <option value="expiry_first">Reset Optimizer (Zero Waste)</option>
           <option value="round_robin">Round-Robin Interval</option>
@@ -470,11 +838,80 @@
       </div>
     </div>
 
+    <!-- Smart Recommendations & Failover Banner -->
     <div id="alertContainer"></div>
+
+    <!-- Account Filter & Search Toolbar -->
+    <div class="filter-bar">
+      <div class="filter-chips">
+        <div class="chip active" onclick="setFilter('all', this)">All Accounts (<span id="countAll">0</span>)</div>
+        <div class="chip" onclick="setFilter('active', this)">Active Sessions (<span id="countActive">0</span>)</div>
+        <div class="chip" onclick="setFilter('healthy', this)">Ready (>20%) (<span id="countHealthy">0</span>)</div>
+        <div class="chip" onclick="setFilter('resetting', this)">Resetting Soon (<span id="countResetting">0</span>)</div>
+        <div class="chip" onclick="setFilter('depleted', this)">Depleted (<span id="countDepleted">0</span>)</div>
+      </div>
+      <input type="text" id="searchInput" class="search-input" placeholder="🔍 Search email or name..." oninput="handleSearch(this.value)">
+    </div>
+
+    <!-- Account Cards Container -->
     <div id="accountsContainer">Loading account quota status...</div>
   </div>
 
+  <!-- System Diagnostics Modal -->
+  <div id="doctorModal" class="modal-overlay" onclick="closeDoctorModal(event)">
+    <div class="modal-content" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-size:22px;">🩺</span>
+          <div>
+            <h2 style="font-size:18px; font-weight:700;">System Diagnostics & Health Check</h2>
+            <div style="font-size:12px; color:var(--text-muted);">Auditing Keyring, D-Bus, Services, Network, and SQLite</div>
+          </div>
+        </div>
+        <button class="modal-close" onclick="closeDoctorModal()">✕</button>
+      </div>
+      <div id="doctorResults">Running diagnostics...</div>
+    </div>
+  </div>
+
   <script>
+    // State Store
+    let currentData = null;
+    let currentHistory = [];
+    let currentFilter = 'all';
+    let currentSearch = '';
+    let lastFetchedTime = Date.now();
+    let autoSyncTimerId = null;
+    let liveTickTimerId = null;
+
+    // Helper: Formats ISO date to User Local & UTC time, and calculates remaining seconds
+    function parseResetTimestamp(isoStr) {
+      if (!isoStr) return { local: 'N/A', utc: 'N/A', diffSecs: 0, raw: '' };
+      const date = new Date(isoStr);
+      if (isNaN(date.getTime())) return { local: isoStr, utc: isoStr, diffSecs: 0, raw: isoStr };
+      const now = new Date();
+      const diffSecs = Math.max(0, Math.floor((date.getTime() - now.getTime()) / 1000));
+      
+      const localStr = date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) + 
+                       ' at ' + date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+      const utcStr = date.toISOString().substring(0, 10) + ' ' + date.toISOString().substring(11, 16) + ' UTC';
+      return { local: localStr, utc: utcStr, diffSecs, raw: isoStr, dateObj: date };
+    }
+
+    // Helper: Formats seconds to countdown string
+    function formatCountdownString(seconds) {
+      if (seconds <= 0) return 'Resetting now';
+      const days = Math.floor(seconds / 86400);
+      const hours = Math.floor((seconds % 86400) / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      const secs = Math.floor(seconds % 60);
+      
+      if (days > 0) return `${days}d ${hours}h ${minutes}m ${secs}s`;
+      if (hours > 0) return `${hours}h ${minutes}m ${secs}s`;
+      if (minutes > 0) return `${minutes}m ${secs}s`;
+      return `${secs}s`;
+    }
+
     function getStatusBadge(pct) {
       if (pct <= 1.0) return '<span class="status-pill status-exhausted">Finished / Exhausted</span>';
       if (pct <= 10.0) return '<span class="status-pill status-exhausted">Critical</span>';
@@ -490,24 +927,121 @@
       return '#34a853';
     }
 
-    async function loadData() {
+    // Fetch live quota data
+    async function loadData(force = false) {
+      const refreshBtn = document.getElementById('refreshBtn');
+      if (force && refreshBtn) refreshBtn.classList.add('spinning');
       try {
-        const resp = await fetch('/api/quota');
+        const url = force ? '/api/quota?force=true' : '/api/quota';
+        const resp = await fetch(url);
         const data = await resp.json();
+        currentData = data;
+        lastFetchedTime = Date.now();
         renderDashboard(data);
+        loadHistory();
       } catch (err) {
         document.getElementById('accountsContainer').innerHTML = `<div style="color:var(--red); padding:20px;">Failed to fetch quota data: ${err.message}</div>`;
+      } finally {
+        if (refreshBtn) refreshBtn.classList.remove('spinning');
       }
     }
 
+    function forceRefreshData() {
+      loadData(true);
+    }
+
+    // Fetch historical data for 24-hr chart
+    async function loadHistory() {
+      try {
+        const resp = await fetch('/api/history?hours=24');
+        const res = await resp.json();
+        if (res.snapshots && res.snapshots.length > 1) {
+          currentHistory = res.snapshots;
+          renderTrendChart(res.snapshots);
+        }
+      } catch (e) {
+        console.error("Failed to load history:", e);
+      }
+    }
+
+    // Render 24-Hour Quota Trend SVG Chart
+    function renderTrendChart(snapshots) {
+      const card = document.getElementById('chartCard');
+      const countEl = document.getElementById('chartSnapshotsCount');
+      const svg = document.getElementById('trendSvg');
+      if (!card || !svg || !snapshots || snapshots.length < 2) return;
+
+      card.style.display = 'block';
+      countEl.textContent = `${snapshots.length} datapoints over last 24h`;
+
+      const width = svg.clientWidth || 900;
+      const height = 150;
+      svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+      const minTs = snapshots[0].timestamp;
+      const maxTs = snapshots[snapshots.length - 1].timestamp;
+      const tsSpan = Math.max(1, maxTs - minTs);
+
+      // Extract unique active emails
+      const emails = new Set();
+      snapshots.forEach(s => {
+        if (s.accounts) Object.keys(s.accounts).forEach(e => emails.add(e));
+      });
+
+      const colors = ['#4285f4', '#34a853', '#fbbc04', '#9b51e0', '#ff6d00', '#00b0ff'];
+      let colorIdx = 0;
+      let pathsHtml = `
+        <defs>
+          <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#4285f4" stop-opacity="0.3"/>
+            <stop offset="100%" stop-color="#4285f4" stop-opacity="0.0"/>
+          </linearGradient>
+        </defs>
+        <!-- Horizontal grid lines -->
+        <line x1="0" y1="${height - 10}" x2="${width}" y2="${height - 10}" stroke="#232836" stroke-width="1"/>
+        <line x1="0" y1="${height / 2}" x2="${width}" y2="${height / 2}" stroke="#232836" stroke-dasharray="4" stroke-width="1"/>
+        <line x1="0" y1="10" x2="${width}" y2="10" stroke="#232836" stroke-dasharray="4" stroke-width="1"/>
+      `;
+
+      for (const email of emails) {
+        const points = [];
+        for (const s of snapshots) {
+          const acc = s.accounts && s.accounts[email];
+          if (!acc || !acc.groups) continue;
+          let pct = null;
+          for (const [gName, gInfo] of Object.entries(acc.groups)) {
+            if (gName.toLowerCase().includes('gemini') && gInfo.weekly_pct !== null && gInfo.weekly_pct !== undefined) {
+              pct = gInfo.weekly_pct;
+              break;
+            }
+          }
+          if (pct !== null) {
+            const x = ((s.timestamp - minTs) / tsSpan) * (width - 40) + 20;
+            const y = (height - 20) - (pct / 100) * (height - 30);
+            points.push(`${x.toFixed(1)},${y.toFixed(1)}`);
+          }
+        }
+
+        if (points.length >= 2) {
+          const stroke = colors[colorIdx % colors.length];
+          colorIdx++;
+          pathsHtml += `<polyline fill="none" stroke="${stroke}" stroke-width="2.5" stroke-linejoin="round" points="${points.join(' ')}" opacity="0.85"/>`;
+        }
+      }
+
+      svg.innerHTML = pathsHtml;
+    }
+
+    // Main Dashboard Renderer
     function renderDashboard(data) {
-      document.getElementById('lastUpdated').textContent = `Updated: ${new Date().toLocaleTimeString()}`;
+      if (!data) return;
       const accounts = data.accounts || {};
       const rec = data.recommendation;
       const failover = data.failover;
       const geo = data.geo;
+      const activeSessions = data.active_sessions || {};
 
-      // Update IP Geolocation Badge
+      // 1. IP Badge
       const ipBadge = document.getElementById('ipBadge');
       if (ipBadge && geo) {
         const flag = geo.flag || '🌐';
@@ -515,36 +1049,28 @@
         const cc = geo.country_code || '';
         const city = geo.city ? `${geo.city}, ` : '';
         ipBadge.innerHTML = `${flag} <span>${ip}</span> <span style="opacity:0.7">(${city}${cc})</span>`;
-        ipBadge.className = 'ip-badge ' + (geo.is_restricted ? 'ip-restricted' : 'ip-safe');
+        ipBadge.className = 'badge ' + (geo.is_restricted ? 'badge-restricted' : 'badge-safe');
         ipBadge.onclick = () => window.open('https://ipwho.is', '_blank');
         ipBadge.title = `Egress: ${ip} | ${geo.country_name || ''} (${geo.isp || geo.org || 'Direct'})\nClick to test IP`;
       }
 
-      // Update Shield Badge
+      // 2. Shield Badge
       const shieldBadge = document.getElementById('shieldBadge');
-      const shieldCfg = data.shield;
-      if (shieldBadge && shieldCfg) {
-        const isShieldOn = Boolean(shieldCfg.enabled);
-        shieldBadge.className = 'shield-badge ' + (isShieldOn ? 'shield-active' : 'shield-disabled');
+      if (shieldBadge && data.shield) {
+        const isShieldOn = Boolean(data.shield.enabled);
+        shieldBadge.className = 'badge ' + (isShieldOn ? 'badge-active' : 'badge-off');
         shieldBadge.innerHTML = `🛡️ Shield: <span>${isShieldOn ? 'ACTIVE' : 'OFF'}</span>`;
-        shieldBadge.title = isShieldOn
-          ? 'IP Shield ACTIVE: Will automatically terminate Antigravity if VPN disconnects.\nClick to toggle.'
-          : 'IP Shield DISABLED.\nClick to toggle.';
       }
 
-      // Update Balancer Badge & Card
+      // 3. Balancer Badge & Card
       const balancerBadge = document.getElementById('balancerBadge');
       const balancerCard = document.getElementById('balancerCard');
-      const balCfg = data.balancer;
-      if (balancerBadge && balCfg) {
-        const isBalOn = Boolean(balCfg.enabled);
-        const strat = balCfg.strategy || 'watermark';
+      if (balancerBadge && data.balancer) {
+        const isBalOn = Boolean(data.balancer.enabled);
+        const strat = data.balancer.strategy || 'watermark';
         const stratName = strat.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
-        balancerBadge.className = 'balancer-badge ' + (isBalOn ? 'balancer-active' : 'balancer-disabled');
+        balancerBadge.className = 'badge ' + (isBalOn ? 'badge-active' : 'badge-off');
         balancerBadge.innerHTML = `🔄 Balancer: <span>${isBalOn ? stratName : 'OFF'}</span>`;
-        balancerBadge.title = isBalOn
-          ? `Auto-Balancer ACTIVE (${stratName}): Optimizing account pool in background.\nClick to toggle.`
-          : 'Auto-Balancer DISABLED.\nClick to toggle.';
 
         if (balancerCard) {
           balancerCard.style.display = 'flex';
@@ -557,84 +1083,248 @@
           if (stratSelect && stratSelect.value !== strat) {
             stratSelect.value = strat;
           }
-          const descEl = document.getElementById('balancerDesc');
-          if (descEl) {
-            const descs = {
-              'watermark': `Watermark Leveling: Maintains even quota spread (threshold: ${balCfg.watermark_spread_pct || 20}% difference).`,
-              'expiry_first': `Reset Optimizer: Burns accounts whose weekly resets occur soonest (window: ${balCfg.expiry_window_hours || 36}h).`,
-              'round_robin': `Round-Robin: Rotates in circular order every ${balCfg.round_robin_interval_minutes || 60} minutes.`,
-              'reactive': 'Reactive Fallback: Only switches when an active session hits 0% quota.'
-            };
-            descEl.textContent = descs[strat] || 'Automatic account rotation.';
+        }
+      }
+
+      // 4. Split Surface Alignment Strip
+      renderSurfaceSyncStrip(activeSessions);
+
+      // 5. Upcoming Refills Timeline Strip
+      renderUpcomingTimeline(accounts);
+
+      // 6. Active Runout Clock Banner
+      renderRunoutBanner(data.burnrate);
+
+      // 7. Recommendations & Failover Banner
+      renderAlerts(rec, failover, geo);
+
+      // 8. Filter Counts
+      updateFilterCounts(accounts);
+
+      // 9. Accounts Grid
+      renderAccountCards(accounts, data.burnrate);
+    }
+
+    // Render Surface Alignment Controls
+    function renderSurfaceSyncStrip(activeSessions) {
+      const container = document.getElementById('surfaceSyncContainer');
+      if (!container) return;
+
+      const desktop = activeSessions.desktop;
+      const ide = activeSessions.ide;
+
+      if (desktop && ide && desktop.email.toLowerCase() !== ide.email.toLowerCase()) {
+        container.innerHTML = `
+          <div class="surface-sync-card">
+            <div class="surface-sync-title">
+              <span>⚡ Split Sessions Detected:</span>
+              <span style="color:#81c995;">📱 Desktop App: <strong>${desktop.email}</strong> (${desktop.quota_pct.toFixed(1)}%)</span>
+              <span style="opacity:0.5;">|</span>
+              <span style="color:#8ab4f8;">💻 IDE: <strong>${ide.email}</strong> (${ide.quota_pct.toFixed(1)}%)</span>
+            </div>
+            <div class="surface-sync-actions">
+              <button class="btn-sync-action" onclick="syncSurfaces('ide')">🔗 Align IDE to Desktop (${desktop.email})</button>
+              <button class="btn-sync-action" onclick="syncSurfaces('desktop')">🔗 Align Desktop to IDE (${ide.email})</button>
+            </div>
+          </div>
+        `;
+      } else {
+        container.innerHTML = '';
+      }
+    }
+
+    // Render Upcoming Refill Timeline Strip
+    function renderUpcomingTimeline(accounts) {
+      const grid = document.getElementById('timelineGrid');
+      if (!grid) return;
+
+      const items = [];
+      for (const [email, acc] of Object.entries(accounts)) {
+        if (!acc.groups) continue;
+        for (const g of acc.groups) {
+          if (g.displayName.toLowerCase().includes('gemini') && g.weekly && g.weekly.resetTime) {
+            const parsed = parseResetTimestamp(g.weekly.resetTime);
+            items.push({
+              email: email,
+              name: acc.name,
+              tier: acc.tier,
+              group: g.displayName,
+              remainingPct: g.weekly.remainingPercent,
+              resetIso: g.weekly.resetTime,
+              diffSecs: parsed.diffSecs,
+              localStr: parsed.local,
+              utcStr: parsed.utc,
+              isUrgent: parsed.diffSecs < 86400 // Within 24 hours
+            });
+            break;
           }
         }
       }
 
-      const alertContainer = document.getElementById('alertContainer');
-      let alertHtml = '';
+      // Sort soonest first
+      items.sort((a, b) => a.diffSecs - b.diffSecs);
 
-      // Restricted Region Warning Banner
-      if (geo && geo.is_restricted) {
-        alertHtml += `
-          <div class="alert-banner" style="background: rgba(234, 67, 53, 0.2); border-color: rgba(234, 67, 53, 0.6); color: #f28b82; margin-bottom: 20px;">
-            <span style="font-size: 24px;">⚠️</span>
-            <div>
-              <strong style="font-size: 15px;">RESTRICTED REGION DETECTED (${geo.country_name || geo.country_code}):</strong><br>
-              Your public egress IP (<strong>${geo.ip}</strong>) is located in a region restricted by Google CloudCode & Antigravity APIs.<br>
-              <span style="color:#f0f3f6;">Please connect your VPN proxy immediately to prevent Antigravity session termination.</span>
+      let html = '';
+      for (const it of items) {
+        const cardClass = it.isUrgent ? 'timeline-card urgent' : 'timeline-card';
+        const countdownStr = formatCountdownString(it.diffSecs);
+        const urgentTag = it.isUrgent 
+          ? `<span class="status-pill status-healthy" style="font-size:9px;">REFILLS SOON</span>`
+          : `<span class="status-pill status-low" style="font-size:9px;">WEEKLY</span>`;
+
+        html += `
+          <div class="${cardClass}">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div class="timeline-email" title="${it.email}">${it.email}</div>
+              ${urgentTag}
             </div>
+            <div class="timeline-clock" data-target-iso="${it.resetIso}">
+              ⏱️ ${countdownStr}
+            </div>
+            <div class="timeline-sub">
+              <span>📅 ${it.localStr}</span>
+              <span style="opacity:0.7;">${it.remainingPct.toFixed(1)}% Left</span>
+            </div>
+          </div>
+        `;
+      }
+
+      grid.innerHTML = html || '<div style="color:var(--text-muted); font-size:13px;">No upcoming reset schedules found.</div>';
+    }
+
+    // Render Runout Clock Banner
+    function renderRunoutBanner(burnrate) {
+      const container = document.getElementById('runoutContainer');
+      if (!container) return;
+
+      if (!burnrate || !burnrate.active_metrics || !burnrate.active_metrics.primary) {
+        container.innerHTML = '';
+        return;
+      }
+
+      const pri = burnrate.active_metrics.primary;
+      if (!pri.is_depleting) {
+        container.innerHTML = '';
+        return;
+      }
+
+      container.innerHTML = `
+        <div class="runout-banner">
+          <div>
+            <div class="runout-title">
+              <span>⏱️ Active Session Runout Clock (${burnrate.active_email || 'Active Account'})</span>
+              <span class="status-pill status-exhausted">${pri.pace_status || 'DEPLETING'}</span>
+            </div>
+            <div style="font-size:13px; color:#f0f3f6; margin-top:4px;">
+              Tokens burning at <strong>${pri.velocity_pct_per_hour.toFixed(1)}%/hr</strong>. Estimated depletion in <strong>${pri.eta_human}</strong> (around <strong>${pri.depletion_time_str}</strong>).
+            </div>
+          </div>
+          <div class="runout-stats">
+            <div class="runout-stat-box">
+              <span style="color:var(--text-muted);">Current:</span> <strong>${pri.current_quota_pct.toFixed(1)}%</strong>
+            </div>
+            <div class="runout-stat-box">
+              <span style="color:var(--text-muted);">Rate:</span> <strong style="color:#f28b82;">-${pri.velocity_pct_per_hour.toFixed(1)}%/h</strong>
+            </div>
+            <div class="runout-stat-box">
+              <span style="color:var(--text-muted);">Zero Out:</span> <strong style="color:#fdd663;">${pri.depletion_time_str}</strong>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // Render Alerts & Recommendations
+    function renderAlerts(rec, failover, geo) {
+      const container = document.getElementById('alertContainer');
+      let html = '';
+
+      if (geo && geo.is_restricted) {
+        html += `
+          <div class="alert-banner" style="background:rgba(234,67,53,0.2); border:1px solid rgba(234,67,53,0.6); color:#f28b82; padding:14px 18px; border-radius:12px; margin-bottom:18px;">
+            ⚠️ <strong>RESTRICTED REGION (${geo.country_name || geo.country_code}):</strong> Your egress IP (<strong>${geo.ip}</strong>) is restricted. Please connect VPN to avoid Antigravity session disconnects.
           </div>
         `;
       }
 
       if (failover && failover.backup_candidate_email) {
         if (failover.is_active_exhausted) {
-          alertHtml += `
-            <div class="alert-banner" style="background: rgba(234, 67, 53, 0.15); border-color: rgba(234, 67, 53, 0.4); color: #f28b82; justify-content: space-between;">
-              <div style="display:flex; align-items:center; gap:12px;">
-                <span style="font-size: 20px;">⚠️</span>
-                <div>
-                  <strong>Active Quota Exhausted!</strong> ${failover.active_email} has ${failover.active_quota_pct}% tokens remaining.<br>
-                  <span style="color:#f0f3f6;">Recommended backup: <strong>${failover.backup_candidate_email}</strong> (${failover.backup_candidate_pct}% quota ready)</span>
-                </div>
+          html += `
+            <div class="alert-banner" style="background:rgba(234,67,53,0.15); border:1px solid rgba(234,67,53,0.4); color:#f28b82; padding:14px 18px; border-radius:12px; margin-bottom:18px; display:flex; justify-content:space-between; align-items:center;">
+              <div>
+                <strong>⚠️ Active Quota Exhausted!</strong> ${failover.active_email} has ${failover.active_quota_pct}% remaining.<br>
+                <span>Recommended backup: <strong>${failover.backup_candidate_email}</strong> (${failover.backup_candidate_pct}% ready)</span>
               </div>
-              <button class="btn-switch" style="background:#ea4335;" onclick="switchAccount('${failover.backup_candidate_email}')">⚡ Switch Now</button>
+              <button class="btn-primary" onclick="switchAccount('${failover.backup_candidate_email}', 'both')">⚡ Switch Now</button>
             </div>
           `;
         } else {
-          alertHtml += `
-            <div class="alert-banner" style="background: rgba(66, 133, 244, 0.08); border-color: rgba(66, 133, 244, 0.25); color: #8ab4f8;">
-              <span style="font-size: 18px;">🛡️</span>
-              <div>
-                <strong>Smart Failover Standby:</strong> Active: <strong>${failover.active_email || 'N/A'}</strong> (${failover.active_quota_pct}%) &nbsp;|&nbsp; 
-                Next Backup: <strong>${failover.backup_candidate_email}</strong> (${failover.backup_candidate_pct}% ready)
-              </div>
+          html += `
+            <div class="alert-banner" style="background:rgba(66,133,244,0.08); border:1px solid rgba(66,133,244,0.25); color:#8ab4f8; padding:12px 18px; border-radius:12px; margin-bottom:18px;">
+              🛡️ <strong>Smart Failover Standby:</strong> Active: <strong>${failover.active_email || 'N/A'}</strong> (${failover.active_quota_pct}%) &nbsp;|&nbsp; Next Standby: <strong>${failover.backup_candidate_email}</strong> (${failover.backup_candidate_pct}% ready)
             </div>
           `;
         }
       }
 
-      const burnrate = data.burnrate;
-      const activeMetrics = burnrate && burnrate.active_metrics;
-      const activePri = activeMetrics && activeMetrics.primary;
-      if (activePri && activePri.is_depleting && activePri.eta_seconds && activePri.eta_seconds < 10800) {
-        alertHtml += `
-          <div class="alert-banner" style="background: rgba(234, 67, 53, 0.15); border-color: rgba(234, 67, 53, 0.4); color: #f28b82;">
-            <span style="font-size: 20px;">⏱️</span>
-            <div>
-              <strong>Active Quota Burn Warning:</strong> Active account <strong>${burnrate.active_email || ''}</strong> is burning tokens at <strong>${activePri.velocity_pct_per_hour.toFixed(1)}%/hr</strong>.<br>
-              <span style="color:#f0f3f6;">Estimated empty in <strong>${activePri.eta_human}</strong> (at <strong>${activePri.depletion_time_str}</strong>). Consider auto-balancing or pacing usage.</span>
-            </div>
-          </div>
-        `;
-      }
-
       if (rec && (!failover || !failover.is_active_exhausted)) {
-        alertHtml += `<div class="alert-banner"><span>💡</span> <div>${rec}</div></div>`;
+        html += `<div class="alert-banner" style="background:rgba(251,188,4,0.08); border:1px solid rgba(251,188,4,0.25); color:#fdd663; padding:12px 18px; border-radius:12px; margin-bottom:18px;">💡 ${rec}</div>`;
       }
-      alertContainer.innerHTML = alertHtml;
 
-      let html = '';
+      container.innerHTML = html;
+    }
+
+    // Update Filter Tab Counts
+    function updateFilterCounts(accounts) {
+      let all = 0, active = 0, healthy = 0, resetting = 0, depleted = 0;
+      for (const [_, acc] of Object.entries(accounts)) {
+        all++;
+        const isAct = acc.is_current_desktop_session || acc.is_current_ide_session;
+        if (isAct) active++;
+
+        let geminiPct = 0;
+        let isResetting = false;
+        if (acc.groups) {
+          for (const g of acc.groups) {
+            if (g.displayName.toLowerCase().includes('gemini') && g.weekly) {
+              geminiPct = g.weekly.remainingPercent;
+              if (g.weekly.resetTime) {
+                const p = parseResetTimestamp(g.weekly.resetTime);
+                if (p.diffSecs < 86400) isResetting = true;
+              }
+            }
+          }
+        }
+
+        if (geminiPct > 20.0) healthy++;
+        if (geminiPct <= 1.0) depleted++;
+        if (isResetting) resetting++;
+      }
+
+      document.getElementById('countAll').textContent = all;
+      document.getElementById('countActive').textContent = active;
+      document.getElementById('countHealthy').textContent = healthy;
+      document.getElementById('countResetting').textContent = resetting;
+      document.getElementById('countDepleted').textContent = depleted;
+    }
+
+    function setFilter(filterType, element) {
+      currentFilter = filterType;
+      document.querySelectorAll('.filter-chips .chip').forEach(c => c.classList.remove('active'));
+      if (element) element.classList.add('active');
+      if (currentData) renderAccountCards(currentData.accounts, currentData.burnrate);
+    }
+
+    function handleSearch(val) {
+      currentSearch = (val || '').toLowerCase().trim();
+      if (currentData) renderAccountCards(currentData.accounts, currentData.burnrate);
+    }
+
+    // Render Account Cards
+    function renderAccountCards(accounts, burnrate) {
+      const container = document.getElementById('accountsContainer');
+      if (!container) return;
+
       const sortedAccounts = Object.entries(accounts).sort((a, b) => {
         const getPrio = (acc) => {
           if (acc.is_current_desktop_session && acc.is_current_ide_session) return 0;
@@ -650,85 +1340,97 @@
         return remB - remA;
       });
 
+      let html = '';
+      let visibleCount = 0;
+
       for (const [email, acc] of sortedAccounts) {
         const isCurrentDesktop = Boolean(acc.is_current_desktop_session);
         const isCurrentIde = Boolean(acc.is_current_ide_session);
+        const isActive = isCurrentDesktop || isCurrentIde;
+
+        // Quota percentage for filtering
+        let geminiPct = 0;
+        let isResettingSoon = false;
+        if (acc.groups) {
+          for (const g of acc.groups) {
+            if (g.displayName.toLowerCase().includes('gemini') && g.weekly) {
+              geminiPct = g.weekly.remainingPercent;
+              if (g.weekly.resetTime) {
+                const p = parseResetTimestamp(g.weekly.resetTime);
+                if (p.diffSecs < 86400) isResettingSoon = true;
+              }
+            }
+          }
+        }
+
+        // Apply tab filters
+        if (currentFilter === 'active' && !isActive) continue;
+        if (currentFilter === 'healthy' && geminiPct <= 20.0) continue;
+        if (currentFilter === 'resetting' && !isResettingSoon) continue;
+        if (currentFilter === 'depleted' && geminiPct > 1.0) continue;
+
+        // Apply search filter
+        if (currentSearch) {
+          const matchEmail = email.toLowerCase().includes(currentSearch);
+          const matchName = (acc.name || '').toLowerCase().includes(currentSearch);
+          if (!matchEmail && !matchName) continue;
+        }
+
+        visibleCount++;
+
+        // Active Badge
         let activeBadge = '';
-        if (acc.is_current_desktop_session && acc.is_current_ide_session) {
-          activeBadge = '<div class="active-badge"><div class="active-dot"></div> Active (App + IDE)</div>';
-        } else if (acc.is_current_desktop_session) {
-          activeBadge = '<div class="active-badge"><div class="active-dot"></div> Active in Antigravity App</div>';
-        } else if (acc.is_current_ide_session) {
-          activeBadge = '<div class="active-badge"><div class="active-dot"></div> Active in IDE</div>';
+        if (isCurrentDesktop && isCurrentIde) {
+          activeBadge = '<div class="active-badge both-surfaces"><div class="active-dot"></div> Active (App + IDE)</div>';
+        } else if (isCurrentDesktop) {
+          activeBadge = '<div class="active-badge desktop-only"><div class="active-dot"></div> Active in Desktop App</div>';
+        } else if (isCurrentIde) {
+          activeBadge = '<div class="active-badge ide-only"><div class="active-dot"></div> Active in IDE</div>';
         } else if (acc.is_cached) {
-          activeBadge = '<div class="active-badge" style="background:rgba(251, 188, 4, 0.15); border-color:rgba(251, 188, 4, 0.3); color:#fbbc04;"><div class="active-dot" style="background:#fbbc04;"></div> Inactive (Last Seen)</div>';
+          activeBadge = '<div class="active-badge" style="background:rgba(251, 188, 4, 0.12); color:#fbbc04;"><div class="active-dot" style="background:#fbbc04;"></div> Inactive (Last Seen)</div>';
         } else {
-          activeBadge = '<div class="active-badge" style="background:rgba(128, 134, 139, 0.15); border-color:rgba(128, 134, 139, 0.3); color:#9aa0a6;"><div class="active-dot" style="background:#9aa0a6;"></div> Inactive</div>';
+          activeBadge = '<div class="active-badge" style="background:rgba(255, 255, 255, 0.05); color:var(--text-muted);"><div class="active-dot" style="background:var(--text-muted);"></div> Inactive</div>';
         }
 
-        const accBurn = burnrate && burnrate.accounts && burnrate.accounts[email];
-        const pri = accBurn && accBurn.primary;
-        let burnBadge = '';
-        if (pri) {
-          let burnClass = 'burn-idle';
-          if (pri.pace_status === 'HIGH BURN') burnClass = 'burn-high';
-          else if (pri.pace_status === 'ACTIVE') burnClass = 'burn-active';
-          else if (pri.pace_status === 'MODERATE') burnClass = 'burn-moderate';
-
-          let etaText = pri.is_depleting 
-            ? `Empty in ${pri.eta_human} (${pri.depletion_time_str})` 
-            : (pri.current_quota_pct <= 1.0 ? 'Exhausted' : 'Stable / Idle');
-
-          const w15 = (accBurn.windows && accBurn.windows['15m'] && accBurn.windows['15m'].velocity_pct_per_hour) || 0;
-          const w1h = (accBurn.windows && accBurn.windows['1h'] && accBurn.windows['1h'].velocity_pct_per_hour) || 0;
-          const w6h = (accBurn.windows && accBurn.windows['6h'] && accBurn.windows['6h'].velocity_pct_per_hour) || 0;
-          const tooltip = `Velocity Windows:\n15m (Burst): ${w15.toFixed(1)}%/h\n1h (Baseline): ${w1h.toFixed(1)}%/h\n6h (Sustained): ${w6h.toFixed(1)}%/h\nDatapoints: ${pri.datapoints}`;
-
-          burnBadge = `
-            <div class="burn-badge ${burnClass}" title="${tooltip}">
-              <span>${pri.pace_icon}</span>
-              <span>${pri.velocity_pct_per_hour.toFixed(1)}%/hr</span>
-              <span style="opacity:0.5;">•</span>
-              <span>⏱️ ${etaText}</span>
-            </div>
-          `;
-        }
-
+        // Surface Switch Action Group
         let switchActionHtml = '';
         if (isCurrentDesktop && isCurrentIde) {
-          switchActionHtml = '<div style="font-size:12px; color:var(--green); font-weight:600; display:flex; align-items:center; gap:6px;"><span>✓</span> Active (App + IDE)</div>';
+          switchActionHtml = '<div style="font-size:12px; color:var(--green); font-weight:700;">✓ Active on Both Surfaces</div>';
         } else if (isCurrentDesktop && !isCurrentIde) {
           switchActionHtml = `
             <div class="switch-group">
-              <span style="font-size:11px; color:#81c995; font-weight:600; padding:0 6px;">📱 App Active</span>
+              <span style="font-size:11px; color:#81c995; font-weight:700; padding:0 6px;">📱 App Active</span>
               <button class="btn-switch-single" onclick="switchAccount('${acc.email}', 'ide')" title="Switch IDE to this account (Desktop App remains active)">💻 Switch IDE Here</button>
             </div>
           `;
         } else if (!isCurrentDesktop && isCurrentIde) {
           switchActionHtml = `
             <div class="switch-group">
-              <span style="font-size:11px; color:#8ab4f8; font-weight:600; padding:0 6px;">💻 IDE Active</span>
+              <span style="font-size:11px; color:#8ab4f8; font-weight:700; padding:0 6px;">💻 IDE Active</span>
               <button class="btn-switch-single" onclick="switchAccount('${acc.email}', 'desktop')" title="Switch Desktop App to this account (IDE remains active)">📱 Switch App Here</button>
             </div>
           `;
         } else {
           switchActionHtml = `
             <div class="switch-group">
-              <button class="btn-switch-both" onclick="switchAccount('${acc.email}', 'both')" title="Switch both Desktop App and IDE to ${acc.email}">⚡ Both</button>
-              <button class="btn-switch-surface" onclick="switchAccount('${acc.email}', 'desktop')" title="Switch Desktop App only (leave IDE untouched)">📱 App</button>
-              <button class="btn-switch-surface" onclick="switchAccount('${acc.email}', 'ide')" title="Switch IDE only (leave Desktop App untouched)">💻 IDE</button>
+              <button class="btn-switch-both" onclick="switchAccount('${acc.email}', 'both')" title="Switch both surfaces to ${acc.email}">⚡ Both</button>
+              <button class="btn-switch-surface" onclick="switchAccount('${acc.email}', 'desktop')" title="Switch Desktop App only">📱 App</button>
+              <button class="btn-switch-surface" onclick="switchAccount('${acc.email}', 'ide')" title="Switch IDE only">💻 IDE</button>
             </div>
           `;
         }
 
+        const safeId = email.replace(/[^a-zA-Z0-9]/g, '_');
+        const models = acc.models || [];
+        const modelCount = models.length;
+
         html += `
-          <div class="account-card">
+          <div class="account-card ${isActive ? 'is-active-card' : ''}">
             <div class="account-header">
               <div class="user-info">
                 <div class="email">${acc.email}</div>
                 <div class="tier-badge">${acc.tier || 'Standard'}</div>
                 ${activeBadge}
-                ${burnBadge}
               </div>
               ${switchActionHtml}
             </div>
@@ -737,7 +1439,7 @@
         `;
 
         if (!acc.groups || acc.groups.length === 0) {
-          html += `<div style="grid-column: 1 / -1; padding: 24px; text-align: center; color: var(--text-muted); font-style: italic;">No quota data recorded yet. Log into Antigravity with this account to snapshot session & quota.</div>`;
+          html += `<div style="grid-column: 1 / -1; padding: 20px; text-align: center; color: var(--text-muted); font-style: italic;">No quota data recorded yet. Log into Antigravity with this account to snapshot session & quota.</div>`;
         }
 
         for (const g of (acc.groups || [])) {
@@ -746,6 +1448,15 @@
           const wPct = w ? w.remainingPercent : 0;
           const fPct = f ? f.remainingPercent : 0;
 
+          // Parse Weekly Reset
+          const wReset = w ? parseResetTimestamp(w.resetTime) : null;
+          const wCountdownStr = wReset ? formatCountdownString(wReset.diffSecs) : 'N/A';
+          const isUrgent = wReset && wReset.diffSecs < 86400;
+
+          // Parse 5-Hour Reset
+          const fReset = f ? parseResetTimestamp(f.resetTime) : null;
+          const fCountdownStr = fReset ? formatCountdownString(fReset.diffSecs) : 'N/A';
+
           html += `
             <div class="group-box">
               <div class="group-title">
@@ -753,99 +1464,251 @@
                 ${w ? getStatusBadge(wPct) : ''}
               </div>
 
+              <!-- Weekly Limit Meter -->
               <div class="meter-label">
-                <span>Weekly Limit Remaining</span>
+                <span>Weekly Quota Limit</span>
                 <strong>${wPct.toFixed(1)}%</strong>
               </div>
               <div class="progress-bar-bg">
                 <div class="progress-bar-fill" style="width: ${wPct}%; background-color: ${getBarColor(wPct)};"></div>
               </div>
 
-              <div class="countdown-row">
-                <span>Reset: ${w ? w.countdown : 'N/A'}</span>
-                <span>${w && w.resetTime ? w.resetTime.replace('T', ' ').substring(0, 16) + ' UTC' : ''}</span>
+              <!-- High-Contrast Weekly Reset Countdown Box -->
+              <div class="countdown-box">
+                <div class="countdown-header">
+                  <span>Weekly Refill In</span>
+                  <span>${isUrgent ? '🔥 SOON' : 'WEEKLY CYCLE'}</span>
+                </div>
+                <div class="countdown-ticker ${isUrgent ? 'urgent' : ''}" data-target-iso="${w ? w.resetTime : ''}">
+                  ⏱️ ${wCountdownStr}
+                </div>
+                <div class="countdown-time-sub">
+                  <span>Local: ${wReset ? wReset.local : 'N/A'}</span>
+                  <span style="opacity:0.6;">${wReset ? wReset.utc : ''}</span>
+                </div>
               </div>
 
-              <div class="meter-sub">
+              <!-- 5-Hour Limit Meter -->
+              <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.05);">
                 <div class="meter-label">
-                  <span>5-Hour Limit</span>
+                  <span>5-Hour Rolling Limit</span>
                   <strong>${fPct.toFixed(1)}%</strong>
                 </div>
                 <div class="progress-bar-bg">
                   <div class="progress-bar-fill" style="width: ${fPct}%; background-color: ${getBarColor(fPct)};"></div>
+                </div>
+
+                <!-- 5-Hour Reset Sub-box -->
+                <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px; color:var(--text-muted); font-family:'JetBrains Mono', monospace;">
+                  <span>5h Reset In: <strong style="color:#8ab4f8;" data-target-iso="${f ? f.resetTime : ''}">${fCountdownStr}</strong></span>
+                  <span>${fReset ? fReset.local : ''}</span>
                 </div>
               </div>
             </div>
           `;
         }
 
-        html += `
+        html += `</div>`;
+
+        // 33-Model Drilldown Accordion
+        if (modelCount > 0) {
+          html += `
+            <div class="model-drawer">
+              <button class="model-toggle-btn" onclick="toggleModelDrawer('${safeId}')">
+                <span>🔍 Individual Model Quotas (${modelCount} Models)</span>
+                <span id="drawerArrow_${safeId}">▼</span>
+              </button>
+              <div id="drawerContent_${safeId}" class="model-list-container">
+                <input type="text" class="model-search-box" placeholder="Filter models (e.g. 'claude', 'gemini-3', 'pro')..." oninput="filterModelsTable('${safeId}', this.value)">
+                <table class="model-table" id="table_${safeId}">
+                  <thead>
+                    <tr>
+                      <th>Model ID</th>
+                      <th style="width:160px;">Remaining Quota</th>
+                      <th>Reset Time (Local)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+          `;
+
+          for (const m of models) {
+            const mId = m.modelId || 'unknown';
+            const mPct = (m.remainingPercent !== undefined) ? m.remainingPercent : (m.remainingFraction * 100);
+            const mReset = parseResetTimestamp(m.resetTime);
+            let badgeClass = '';
+            if (mId.includes('claude')) badgeClass = 'claude';
+            else if (mId.includes('gemini')) badgeClass = 'gemini';
+            else if (mId.includes('gpt')) badgeClass = 'gpt';
+
+            html += `
+              <tr data-model-id="${mId.toLowerCase()}">
+                <td><span class="model-id-badge ${badgeClass}">${mId}</span></td>
+                <td>
+                  <div style="display:flex; align-items:center; gap:8px;">
+                    <div style="flex:1; height:6px; background:#1c212c; border-radius:3px; overflow:hidden;">
+                      <div style="width:${mPct}%; height:100%; background:${getBarColor(mPct)};"></div>
+                    </div>
+                    <strong>${mPct.toFixed(1)}%</strong>
+                  </div>
+                </td>
+                <td style="color:var(--text-muted); font-size:11px;">${mReset.local !== 'N/A' ? mReset.local : 'Standard Cycle'}</td>
+              </tr>
+            `;
+          }
+
+          html += `
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
-        `;
+          `;
+        }
+
+        html += `</div>`;
       }
 
-      document.getElementById('accountsContainer').innerHTML = html;
+      if (visibleCount === 0) {
+        html = `<div style="text-align:center; padding:40px; color:var(--text-muted); font-style:italic;">No accounts matched the current filter or search query.</div>`;
+      }
+
+      container.innerHTML = html;
     }
 
+    // Toggle individual model drawer
+    function toggleModelDrawer(safeId) {
+      const content = document.getElementById(`drawerContent_${safeId}`);
+      const arrow = document.getElementById(`drawerArrow_${safeId}`);
+      if (!content) return;
+      if (content.style.display === 'block') {
+        content.style.display = 'none';
+        if (arrow) arrow.textContent = '▼';
+      } else {
+        content.style.display = 'block';
+        if (arrow) arrow.textContent = '▲';
+      }
+    }
+
+    // Real-time model search inside drawer
+    function filterModelsTable(safeId, query) {
+      const q = (query || '').toLowerCase().trim();
+      const rows = document.querySelectorAll(`#table_${safeId} tbody tr`);
+      rows.forEach(r => {
+        const id = r.getAttribute('data-model-id') || '';
+        r.style.display = id.includes(q) ? '' : 'none';
+      });
+    }
+
+    // Live 1-Second Ticking Loop
+    function startLiveTicks() {
+      if (liveTickTimerId) clearInterval(liveTickTimerId);
+      liveTickTimerId = setInterval(() => {
+        const now = new Date();
+        // Update Local & UTC Clocks in sub-bar
+        const localClock = document.getElementById('localClock');
+        const utcClock = document.getElementById('utcClock');
+        if (localClock) localClock.textContent = now.toLocaleTimeString();
+        if (utcClock) utcClock.textContent = now.toISOString().substring(11, 19);
+
+        // Update "Synced X seconds ago"
+        const lastSync = document.getElementById('lastSyncedTimer');
+        if (lastSync) {
+          const diffSec = Math.floor((Date.now() - lastFetchedTime) / 1000);
+          lastSync.textContent = diffSec < 5 ? 'Synced: just now' : `Synced: ${diffSec}s ago`;
+        }
+
+        // Live decrement all countdown elements on the page
+        document.querySelectorAll('[data-target-iso]').forEach(el => {
+          const iso = el.getAttribute('data-target-iso');
+          if (!iso) return;
+          const target = new Date(iso);
+          if (isNaN(target.getTime())) return;
+          const secs = Math.max(0, Math.floor((target.getTime() - now.getTime()) / 1000));
+          const text = formatCountdownString(secs);
+          if (el.classList.contains('countdown-ticker') || el.classList.contains('timeline-clock')) {
+            el.textContent = `⏱️ ${text}`;
+          } else {
+            el.textContent = text;
+          }
+        });
+      }, 1000);
+    }
+
+    // Update Auto-Sync interval
+    function updateSyncInterval(val) {
+      if (autoSyncTimerId) clearInterval(autoSyncTimerId);
+      const secs = parseInt(val, 10);
+      if (secs > 0) {
+        autoSyncTimerId = setInterval(() => loadData(false), secs * 1000);
+      }
+    }
+
+    // Switch account action
     async function switchAccount(email, surface = 'both') {
       let surfaceName = "App + IDE";
-      let restartNote = "Antigravity Desktop App will restart.";
-      if (surface === 'desktop' || surface === 'app') {
-        surfaceName = "Desktop App only";
-        restartNote = "Antigravity Desktop App will restart (IDE editor remains untouched).";
-      } else if (surface === 'ide') {
-        surfaceName = "Antigravity IDE only";
-        restartNote = "IDE configuration will be updated (Desktop App remains untouched).";
-      }
+      if (surface === 'desktop' || surface === 'app') surfaceName = "Desktop App only";
+      else if (surface === 'ide') surfaceName = "Antigravity IDE only";
 
-      if (!confirm(`Switch ${surfaceName} to ${email}?\n${restartNote}`)) return;
-      const alertContainer = document.getElementById('alertContainer');
-      alertContainer.innerHTML = `<div class="alert-banner" style="background:#1a2333; border-color:#4285f4;"><span>⏳</span> <div>Switching ${surfaceName} to ${email}...</div></div>`;
+      if (!confirm(`Switch ${surfaceName} to ${email}?`)) return;
       try {
         const resp = await fetch(`/api/switch?email=${encodeURIComponent(email)}&surface=${encodeURIComponent(surface)}`);
         const res = await resp.json();
         if (res.success) {
-          alert(`✓ ${res.message || 'Successfully switched!'}`);
-          loadData();
+          alert(`✓ ${res.message || 'Switched successfully!'}`);
+          loadData(true);
         } else {
           alert(`Switch failed: ${res.message || res.error}`);
-          loadData();
         }
       } catch (err) {
         alert(`Error: ${err.message}`);
       }
     }
 
+    // Auto switch to best account
     async function switchBest() {
-      if (!confirm("Automatically switch Antigravity to the backup account with the highest available quota? Antigravity will restart.")) return;
-      const alertContainer = document.getElementById('alertContainer');
-      alertContainer.innerHTML = `<div class="alert-banner" style="background:#1a2333; border-color:#4285f4;"><span>⏳</span> <div>Analyzing quotas and auto-switching to healthiest account...</div></div>`;
+      if (!confirm("Auto-switch to the healthiest backup account?")) return;
       try {
         const resp = await fetch('/api/switch-best');
         const res = await resp.json();
         if (res.success) {
           alert(`✓ Auto-switched to ${res.target}!\n${res.message}`);
-          loadData();
+          loadData(true);
         } else {
           alert(`Auto-switch failed: ${res.error || res.message}`);
-          loadData();
         }
       } catch (err) {
         alert(`Error: ${err.message}`);
       }
     }
 
+    // 1-Click Surface Alignment
+    async function syncSurfaces(target) {
+      const name = target === 'ide' ? 'IDE to Desktop App' : 'Desktop App to IDE';
+      if (!confirm(`Align ${name}?`)) return;
+      try {
+        const resp = await fetch(`/api/sync-surfaces?target=${encodeURIComponent(target)}`);
+        const res = await resp.json();
+        if (res.success) {
+          alert(`✓ ${res.message}`);
+          loadData(true);
+        } else {
+          alert(`Alignment notice: ${res.message}`);
+        }
+      } catch (err) {
+        alert(`Alignment error: ${err.message}`);
+      }
+    }
+
+    // Toggle Killswitch Shield
     async function toggleShield() {
       try {
-        const resp = await fetch('/api/shield', { method: 'POST' });
-        const res = await resp.json();
-        await loadData();
+        await fetch('/api/shield', { method: 'POST' });
+        loadData(false);
       } catch (err) {
         alert('Failed to toggle shield: ' + err.message);
       }
     }
 
+    // Toggle Balancer
     async function toggleBalancer() {
       try {
         const currentResp = await fetch('/api/balancer');
@@ -856,44 +1719,100 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ enabled: newState })
         });
-        await loadData();
+        loadData(false);
       } catch (err) {
         alert('Failed to toggle balancer: ' + err.message);
       }
     }
 
+    // Update Balancer Strategy
     async function updateBalancerStrategy(strategy) {
       try {
         await fetch('/api/balancer', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ strategy: strategy })
+          body: JSON.stringify({ strategy })
         });
-        await loadData();
+        loadData(false);
       } catch (err) {
         alert('Failed to update strategy: ' + err.message);
       }
     }
 
+    // Rotate Balancer
     async function rotateBalancer() {
-      const alertContainer = document.getElementById('alertContainer');
-      alertContainer.innerHTML = `<div class="alert-banner" style="background:#1a2333; border-color:#4285f4;"><span>⏳</span> <div>Evaluating pool strategy and rotating account...</div></div>`;
       try {
         const resp = await fetch('/api/balancer/rotate', { method: 'POST' });
         const res = await resp.json();
-        if (res.triggered) {
-          alert(`✓ ${res.message}`);
-        } else {
-          alert(`Notice: ${res.message}`);
-        }
-        await loadData();
+        alert(res.triggered ? `✓ ${res.message}` : `Notice: ${res.message}`);
+        loadData(false);
       } catch (err) {
         alert('Rotation error: ' + err.message);
       }
     }
 
-    loadData();
-    setInterval(loadData, 30000);
+    // Doctor / Diagnostics Modal
+    async function openDoctorModal() {
+      const modal = document.getElementById('doctorModal');
+      const results = document.getElementById('doctorResults');
+      if (modal) modal.style.display = 'flex';
+      if (results) results.innerHTML = '<div style="padding:20px; text-align:center; color:var(--text-muted);">🩺 Running system diagnostics...</div>';
+
+      try {
+        const resp = await fetch('/api/doctor?validate=true');
+        const diag = await resp.json();
+        renderDoctorResults(diag);
+      } catch (err) {
+        if (results) results.innerHTML = `<div style="color:var(--red); padding:16px;">Diagnostic failed: ${err.message}</div>`;
+      }
+    }
+
+    function closeDoctorModal() {
+      const modal = document.getElementById('doctorModal');
+      if (modal) modal.style.display = 'none';
+    }
+
+    function renderDoctorResults(diag) {
+      const results = document.getElementById('doctorResults');
+      if (!results) return;
+
+      let html = '';
+      if (diag.overall_health) {
+        html += `<div style="margin-bottom:14px; font-weight:700; color:var(--text-main);">Overall Health: <span class="status-pill status-healthy">${diag.overall_health}</span></div>`;
+      }
+      const sections = [
+        { key: 'system_checks', title: '🖥️ System Environment & D-Bus Services' },
+        { key: 'app_checks', title: '🛡️ App Configuration & Network Security' },
+        { key: 'account_checks', title: '🔑 Accounts Integrity & Token Validity' }
+      ];
+
+      for (const sec of sections) {
+        const items = diag[sec.key];
+        if (!items || items.length === 0) continue;
+        html += `<h3 style="font-size:14px; font-weight:700; margin:16px 0 8px 0; color:var(--text-muted);">${sec.title}</h3>`;
+        for (const item of items) {
+          const status = item.status || 'INFO';
+          const passClass = status === 'PASS' ? 'diag-pass' : (status === 'WARN' ? 'diag-warn' : 'diag-fail');
+          const pillClass = status === 'PASS' ? 'status-healthy' : (status === 'WARN' ? 'status-low' : 'status-exhausted');
+          html += `
+            <div class="diag-item ${passClass}">
+              <div>
+                <strong style="font-size:13px;">${item.component || item.check || 'Item'}</strong>
+                <div style="font-size:12px; color:var(--text-muted); margin-top:2px;">${item.details || item.message || ''}</div>
+              </div>
+              <span class="status-pill ${pillClass}">${status}</span>
+            </div>
+          `;
+        }
+      }
+
+      results.innerHTML = html || '<div style="padding:20px; color:var(--text-muted);">No diagnostic entries returned.</div>';
+    }
+
+    // Initialize Dashboard
+    loadData(false);
+    updateSyncInterval(30);
+    startLiveTicks();
   </script>
 </body>
 </html>

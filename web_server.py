@@ -1,6 +1,7 @@
 import os
 import json
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from datetime import datetime, timezone
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import urllib.parse
 from antigravity_tracker import accounts, quota, lifecycle
 
@@ -22,13 +23,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.send_error(404, "Template not found")
 
         elif parsed.path == "/api/quota":
+            query = urllib.parse.parse_qs(parsed.query)
+            force = query.get("force", ["false"])[0].lower() == "true"
             accounts.sync_from_antigravity()
-            all_quotas = quota.fetch_all_accounts_quota(force_refresh=False)
+            all_quotas = quota.fetch_all_accounts_quota(force_refresh=force)
             analyzed = {e: lifecycle.analyze_account_lifecycle(q) for e, q in all_quotas.items()}
             rec = lifecycle.compute_switching_recommendation(analyzed)
             from antigravity_tracker import failover, geo, shield, balancer, burnrate
             failover_info = failover.get_failover_status(analyzed)
-            geo_info = geo.get_ip_geo(force_refresh=False)
+            active_sessions = failover.get_active_sessions(analyzed)
+            geo_info = geo.get_ip_geo(force_refresh=force)
             shield_cfg = shield.load_shield_config()
             bal_cfg = balancer.load_balancer_config()
             bal_state = balancer.load_balancer_state()
@@ -37,15 +41,37 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except Exception as be:
                 burnrate_info = {"error": str(be)}
 
+            now_utc = datetime.now(timezone.utc)
+            now_local = datetime.now()
+
+            active_sessions_dict = {}
+            for surf, info in active_sessions.items():
+                if info and info[0]:
+                    email, acc_data = info
+                    rem_pct = 0.0
+                    if acc_data and acc_data.get("groups"):
+                        for g in acc_data["groups"]:
+                            if "gemini" in g.get("displayName", "").lower() and g.get("weekly"):
+                                rem_pct = g["weekly"].get("remainingPercent", 0.0)
+                                break
+                    active_sessions_dict[surf] = {
+                        "email": email,
+                        "quota_pct": rem_pct,
+                        "name": acc_data.get("name", "") if acc_data else ""
+                    }
+
             payload = {
                 "accounts": analyzed,
                 "recommendation": rec,
                 "failover": failover_info,
+                "active_sessions": active_sessions_dict,
                 "geo": geo_info,
                 "shield": shield_cfg,
                 "balancer": bal_cfg,
                 "balancer_state": bal_state,
-                "burnrate": burnrate_info
+                "burnrate": burnrate_info,
+                "server_time_utc": now_utc.isoformat(),
+                "server_time_local": now_local.strftime("%Y-%m-%d %H:%M:%S")
             }
 
             data = json.dumps(payload).encode("utf-8")
@@ -54,6 +80,48 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             self.wfile.write(data)
+
+        elif parsed.path == "/api/history":
+            from antigravity_tracker import burnrate
+            query = urllib.parse.parse_qs(parsed.query)
+            try:
+                hours = float(query.get("hours", ["24"])[0])
+            except ValueError:
+                hours = 24.0
+            max_age = hours * 3600.0
+            snapshots = burnrate.load_snapshots(max_age_seconds=max_age)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(json.dumps({"snapshots": snapshots, "count": len(snapshots)}).encode("utf-8"))
+
+        elif parsed.path == "/api/sync-surfaces":
+            from antigravity_tracker import switcher
+            query = urllib.parse.parse_qs(parsed.query)
+            target = query.get("target", ["ide"])[0].lower()
+
+            registered = accounts.load_accounts()
+            desktop_acc = None
+            ide_acc = None
+            for em, acc in registered.items():
+                if acc.get("is_current_desktop_session"):
+                    desktop_acc = em
+                if acc.get("is_current_ide_session"):
+                    ide_acc = em
+
+            if target in ("ide", "align_ide") and desktop_acc:
+                success, msg = switcher.switch_to_account(desktop_acc, restart=False, surface="ide")
+            elif target in ("desktop", "app", "align_desktop", "align_app") and ide_acc:
+                success, msg = switcher.switch_to_account(ide_acc, restart=True, surface="desktop")
+            else:
+                success, msg = False, "Source session not detected for alignment or invalid target."
+
+            self.send_response(200 if success else 400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": success, "message": msg}).encode("utf-8"))
 
         elif parsed.path == "/api/burnrate":
             from antigravity_tracker import burnrate
@@ -259,7 +327,7 @@ def start_background_server(port: int = 8765):
     try:
         import threading
         server_address = ("127.0.0.1", port)
-        _background_server = HTTPServer(server_address, DashboardHandler)
+        _background_server = ThreadingHTTPServer(server_address, DashboardHandler)
         _background_thread = threading.Thread(target=_background_server.serve_forever, daemon=True)
         _background_thread.start()
         print(f"[Web] Dashboard active at http://localhost:{port}/")
@@ -271,7 +339,7 @@ def start_background_server(port: int = 8765):
 
 def start_server(port: int = 8765):
     server_address = ("127.0.0.1", port)
-    httpd = HTTPServer(server_address, DashboardHandler)
+    httpd = ThreadingHTTPServer(server_address, DashboardHandler)
     print(f"\n[Antigravity Token Dashboard] Serving at http://localhost:{port}/")
     print("Press Ctrl+C to stop the web server.\n")
     try:
