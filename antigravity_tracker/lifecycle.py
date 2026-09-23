@@ -75,9 +75,15 @@ def analyze_account_lifecycle(account_quota: Dict[str, Any]) -> Dict[str, Any]:
 
         analyzed_weekly = None
         if weekly:
+            frac = weekly.get("remainingFraction")
+            if frac is None and "remainingPercent" in weekly:
+                frac = weekly["remainingPercent"] / 100.0
+            elif frac is None:
+                frac = 0.0
+
             cd_str, secs = format_countdown(weekly.get("resetTime", ""))
-            badge, style = get_status_badge(weekly.get("remainingFraction", 0.0))
-            is_exhausted = weekly.get("remainingFraction", 0.0) <= 0.01
+            badge, style = get_status_badge(frac)
+            is_exhausted = frac <= 0.01
             if "gemini" in group_name.lower():
                 is_gemini_exhausted = is_exhausted
             else:

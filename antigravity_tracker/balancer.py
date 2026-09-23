@@ -278,7 +278,7 @@ def evaluate_and_execute_balancer(
         }
 
     active_acc = next((acc for acc in pool if acc["is_active"]), None)
-    candidates = [acc for acc in pool if acc["is_eligible"] and (not active_acc or acc["email"].lower() != active_acc["email"].lower())]
+    candidates = [acc for acc in pool if acc["is_eligible"] and not acc["is_active"]]
 
     rotation_decision = None
 

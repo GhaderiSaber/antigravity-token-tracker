@@ -252,20 +252,49 @@ class TrayApplet:
         if self.geo_info.get("is_restricted"):
             geo_part = f" | ⚠️ RESTRICTED REGION ({self.geo_info.get('country_code', '')})"
 
-        active_pair = failover.get_active_account(self.analyzed_quotas)
-        if not active_pair:
+        active_sessions = failover.get_active_sessions(self.analyzed_quotas)
+        if not active_sessions:
             return f"No active Antigravity session{geo_part}"
 
-        email, q = active_pair
+        d_pair = active_sessions.get("desktop")
+        i_pair = active_sessions.get("ide")
+
+        # Split sessions case: separate accounts on Desktop App and IDE
+        if d_pair and i_pair and d_pair[0].lower() != i_pair[0].lower():
+            d_email, d_q = d_pair
+            d_pct, d_exh = failover.get_account_primary_quota(d_q)
+            d_status = "EXH" if d_exh else f"{d_pct:.1f}%"
+            d_metrics = self.burnrate_data.get("accounts", {}).get(d_email)
+            d_burn = burnrate.format_burnrate_tray_summary(d_metrics) if d_metrics else ""
+
+            i_email, i_q = i_pair
+            i_pct, i_exh = failover.get_account_primary_quota(i_q)
+            i_status = "EXH" if i_exh else f"{i_pct:.1f}%"
+            i_metrics = self.burnrate_data.get("accounts", {}).get(i_email)
+            i_burn = burnrate.format_burnrate_tray_summary(i_metrics) if i_metrics else ""
+
+            return f"📱 App: {d_email} ({d_status}{d_burn}) | 💻 IDE: {i_email} ({i_status}{i_burn}){geo_part}"
+
+        # Unified or single active session
+        if d_pair and i_pair:
+            email, q = d_pair
+            surface_tag = " (App + IDE)"
+        elif d_pair:
+            email, q = d_pair
+            surface_tag = " (App)"
+        else:
+            email, q = i_pair
+            surface_tag = " (IDE)"
+
         pct, is_exh = failover.get_account_primary_quota(q)
         status_str = "EXHAUSTED" if is_exh else f"{pct:.1f}% remaining"
 
         burn_part = ""
-        active_metrics = self.burnrate_data.get("active_metrics")
+        active_metrics = self.burnrate_data.get("accounts", {}).get(email) or self.burnrate_data.get("active_metrics")
         if active_metrics:
             burn_part = burnrate.format_burnrate_tray_summary(active_metrics)
 
-        return f"{email}: {status_str}{burn_part}{geo_part}"
+        return f"{email}{surface_tag}: {status_str}{burn_part}{geo_part}"
 
     def refresh_data(self, force: bool = False):
         """Fetches latest quotas and refreshes the tray icon and IP info."""
@@ -284,11 +313,17 @@ class TrayApplet:
             # Enforce IP Killswitch Shield
             shield.evaluate_and_enforce_shield(self.geo_info)
 
-            active_pair = failover.get_active_account(self.analyzed_quotas)
-            if active_pair:
-                _, q = active_pair
-                pct, is_exh = failover.get_account_primary_quota(q)
-                self.current_icon_name = generate_tray_icon(pct, is_exhausted=is_exh)
+            active_sessions = failover.get_active_sessions(self.analyzed_quotas)
+            if active_sessions:
+                pcts = []
+                is_any_exh = False
+                for _, (_, q) in active_sessions.items():
+                    pct, is_exh = failover.get_account_primary_quota(q)
+                    pcts.append(pct)
+                    if is_exh:
+                        is_any_exh = True
+                min_pct = min(pcts) if pcts else 0.0
+                self.current_icon_name = generate_tray_icon(min_pct, is_exhausted=is_any_exh)
             else:
                 self.current_icon_name = generate_tray_icon(0.0, is_exhausted=True)
 
@@ -304,15 +339,137 @@ class TrayApplet:
         children = []
         item_id = 1
 
-        active_pair = failover.get_active_account(self.analyzed_quotas)
-        active_email = active_pair[0] if active_pair else None
+        active_sessions = failover.get_active_sessions(self.analyzed_quotas)
+        d_pair = active_sessions.get("desktop")
+        i_pair = active_sessions.get("ide")
+        active_emails = {pair[0].lower() for pair in active_sessions.values() if pair}
 
-        # 1. Active Account Header
-        if active_pair:
-            email, q = active_pair
+        def add_burnrate_clock(email: str):
+            nonlocal item_id
+            m = self.burnrate_data.get("accounts", {}).get(email)
+            if not m:
+                return
+            pri = m.get("primary", {})
+            if pri.get("is_depleting"):
+                clock_text = f"  ⏱️ Runout: Empty in {pri.get('eta_human', '')} ({pri.get('depletion_time_str', '')}) [-{pri.get('velocity_pct_per_hour', 0.0):.1f}%/h]"
+                children.append(dbus.Struct((
+                    dbus.Int32(item_id),
+                    dbus.Dictionary({"label": dbus.String(clock_text), "enabled": dbus.Boolean(False)}, signature="sv"),
+                    dbus.Array([], signature="v")
+                ), signature="(ia{sv}av)"))
+                item_id += 1
+            elif pri.get("current_quota_pct", 0.0) <= 1.0:
+                clock_text = "  ⏱️ Runout: Quota Exhausted"
+                children.append(dbus.Struct((
+                    dbus.Int32(item_id),
+                    dbus.Dictionary({"label": dbus.String(clock_text), "enabled": dbus.Boolean(False)}, signature="sv"),
+                    dbus.Array([], signature="v")
+                ), signature="(ia{sv}av)"))
+                item_id += 1
+            else:
+                clock_text = "  ⏱️ Runout: Stable / Idle (<1%/h)"
+                children.append(dbus.Struct((
+                    dbus.Int32(item_id),
+                    dbus.Dictionary({"label": dbus.String(clock_text), "enabled": dbus.Boolean(False)}, signature="sv"),
+                    dbus.Array([], signature="v")
+                ), signature="(ia{sv}av)"))
+                item_id += 1
+
+        is_split = bool(d_pair and i_pair and d_pair[0].lower() != i_pair[0].lower())
+
+        if is_split:
+            d_email, d_q = d_pair
+            i_email, i_q = i_pair
+
+            d_pct, d_exh = failover.get_account_primary_quota(d_q)
+            d_exh_str = " [EXHAUSTED]" if d_exh else ""
+            children.append(dbus.Struct((
+                dbus.Int32(item_id),
+                dbus.Dictionary({"label": dbus.String(f"📱 Desktop App: {d_email} ({d_pct:.1f}%){d_exh_str}"), "enabled": dbus.Boolean(False)}, signature="sv"),
+                dbus.Array([], signature="v")
+            ), signature="(ia{sv}av)"))
+            item_id += 1
+
+            for g in d_q.get("groups", []):
+                w = g.get("weekly")
+                if w:
+                    g_text = f"  {g['displayName']}: {w['remainingPercent']:.1f}% (Resets in {w['countdown']})"
+                    children.append(dbus.Struct((
+                        dbus.Int32(item_id),
+                        dbus.Dictionary({"label": dbus.String(g_text), "enabled": dbus.Boolean(False)}, signature="sv"),
+                        dbus.Array([], signature="v")
+                    ), signature="(ia{sv}av)"))
+                    item_id += 1
+            add_burnrate_clock(d_email)
+
+            # Sub-separator between App and IDE
+            children.append(dbus.Struct((
+                dbus.Int32(item_id),
+                dbus.Dictionary({"type": dbus.String("separator")}, signature="sv"),
+                dbus.Array([], signature="v")
+            ), signature="(ia{sv}av)"))
+            item_id += 1
+
+            i_pct, i_exh = failover.get_account_primary_quota(i_q)
+            i_exh_str = " [EXHAUSTED]" if i_exh else ""
+            children.append(dbus.Struct((
+                dbus.Int32(item_id),
+                dbus.Dictionary({"label": dbus.String(f"💻 Antigravity IDE: {i_email} ({i_pct:.1f}%){i_exh_str}"), "enabled": dbus.Boolean(False)}, signature="sv"),
+                dbus.Array([], signature="v")
+            ), signature="(ia{sv}av)"))
+            item_id += 1
+
+            for g in i_q.get("groups", []):
+                w = g.get("weekly")
+                if w:
+                    g_text = f"  {g['displayName']}: {w['remainingPercent']:.1f}% (Resets in {w['countdown']})"
+                    children.append(dbus.Struct((
+                        dbus.Int32(item_id),
+                        dbus.Dictionary({"label": dbus.String(g_text), "enabled": dbus.Boolean(False)}, signature="sv"),
+                        dbus.Array([], signature="v")
+                    ), signature="(ia{sv}av)"))
+                    item_id += 1
+            add_burnrate_clock(i_email)
+
+            # Quick Surface Alignment Actions
+            children.append(dbus.Struct((
+                dbus.Int32(item_id),
+                dbus.Dictionary({"type": dbus.String("separator")}, signature="sv"),
+                dbus.Array([], signature="v")
+            ), signature="(ia{sv}av)"))
+            item_id += 1
+
+            sync_ide_label = f"🔗 Sync Surfaces: Align IDE to App ({d_email})"
+            children.append(dbus.Struct((
+                dbus.Int32(item_id),
+                dbus.Dictionary({"label": dbus.String(sync_ide_label), "enabled": dbus.Boolean(True)}, signature="sv"),
+                dbus.Array([], signature="v")
+            ), signature="(ia{sv}av)"))
+            self.menu_action_map[item_id] = ("switch", (d_email, "ide"))
+            item_id += 1
+
+            sync_app_label = f"🔗 Sync Surfaces: Align App to IDE ({i_email})"
+            children.append(dbus.Struct((
+                dbus.Int32(item_id),
+                dbus.Dictionary({"label": dbus.String(sync_app_label), "enabled": dbus.Boolean(True)}, signature="sv"),
+                dbus.Array([], signature="v")
+            ), signature="(ia{sv}av)"))
+            self.menu_action_map[item_id] = ("switch", (i_email, "desktop"))
+            item_id += 1
+
+        elif d_pair or i_pair:
+            pair = d_pair or i_pair
+            email, q = pair
+            if d_pair and i_pair:
+                surf_label = "Active (App + IDE)"
+            elif d_pair:
+                surf_label = "Active (Desktop App)"
+            else:
+                surf_label = "Active (Antigravity IDE)"
+
             pct, is_exh = failover.get_account_primary_quota(q)
             exh_str = " [EXHAUSTED]" if is_exh else ""
-            header_text = f"● Active: {email} ({pct:.1f}%){exh_str}"
+            header_text = f"● {surf_label}: {email} ({pct:.1f}%){exh_str}"
 
             children.append(dbus.Struct((
                 dbus.Int32(item_id),
@@ -321,7 +478,6 @@ class TrayApplet:
             ), signature="(ia{sv}av)"))
             item_id += 1
 
-            # Quota breakdown
             for g in q.get("groups", []):
                 w = g.get("weekly")
                 if w:
@@ -332,35 +488,7 @@ class TrayApplet:
                         dbus.Array([], signature="v")
                     ), signature="(ia{sv}av)"))
                     item_id += 1
-
-            # Runout Clock / Burn Rate
-            active_metrics = self.burnrate_data.get("active_metrics")
-            if active_metrics:
-                pri = active_metrics.get("primary", {})
-                if pri.get("is_depleting"):
-                    clock_text = f"  ⏱️ Runout: Empty in {pri.get('eta_human', '')} ({pri.get('depletion_time_str', '')}) [-{pri.get('velocity_pct_per_hour', 0.0):.1f}%/h]"
-                    children.append(dbus.Struct((
-                        dbus.Int32(item_id),
-                        dbus.Dictionary({"label": dbus.String(clock_text), "enabled": dbus.Boolean(False)}, signature="sv"),
-                        dbus.Array([], signature="v")
-                    ), signature="(ia{sv}av)"))
-                    item_id += 1
-                elif pri.get("current_quota_pct", 0.0) <= 1.0:
-                    clock_text = "  ⏱️ Runout: Quota Exhausted"
-                    children.append(dbus.Struct((
-                        dbus.Int32(item_id),
-                        dbus.Dictionary({"label": dbus.String(clock_text), "enabled": dbus.Boolean(False)}, signature="sv"),
-                        dbus.Array([], signature="v")
-                    ), signature="(ia{sv}av)"))
-                    item_id += 1
-                else:
-                    clock_text = "  ⏱️ Runout: Stable / Idle (<1%/h)"
-                    children.append(dbus.Struct((
-                        dbus.Int32(item_id),
-                        dbus.Dictionary({"label": dbus.String(clock_text), "enabled": dbus.Boolean(False)}, signature="sv"),
-                        dbus.Array([], signature="v")
-                    ), signature="(ia{sv}av)"))
-                    item_id += 1
+            add_burnrate_clock(email)
         else:
             children.append(dbus.Struct((
                 dbus.Int32(item_id),
@@ -426,24 +554,54 @@ class TrayApplet:
             ), signature="(ia{sv}av)"))
             item_id += 1
 
-        # 2. Switch Account Options
+        # 2. Switch Account Options (Inactive accounts only)
         registered = accounts.list_accounts()
-        for acc in registered:
-            email = acc.get("email", "")
-            if email.lower() == (active_email or "").lower():
-                continue
+        inactive_accounts = [acc for acc in registered if acc.get("email", "").lower() not in active_emails]
 
+        for acc in inactive_accounts:
+            email = acc.get("email", "")
             q_data = self.analyzed_quotas.get(email, {})
             rem_pct, _ = failover.get_account_primary_quota(q_data)
 
-            switch_label = f"🔄 Switch to {email} ({rem_pct:.1f}% available)"
-            children.append(dbus.Struct((
-                dbus.Int32(item_id),
-                dbus.Dictionary({"label": dbus.String(switch_label), "enabled": dbus.Boolean(True)}, signature="sv"),
+            # Submenu for switching Both, App Only, IDE Only
+            sub_children = []
+
+            sub_both_id = item_id + 1
+            sub_children.append(dbus.Struct((
+                dbus.Int32(sub_both_id),
+                dbus.Dictionary({"label": dbus.String("⚡ Switch Both (App + IDE)"), "enabled": dbus.Boolean(True)}, signature="sv"),
                 dbus.Array([], signature="v")
             ), signature="(ia{sv}av)"))
-            self.menu_action_map[item_id] = ("switch", email)
-            item_id += 1
+            self.menu_action_map[sub_both_id] = ("switch", (email, "both"))
+
+            sub_app_id = item_id + 2
+            sub_children.append(dbus.Struct((
+                dbus.Int32(sub_app_id),
+                dbus.Dictionary({"label": dbus.String("📱 Desktop App Only"), "enabled": dbus.Boolean(True)}, signature="sv"),
+                dbus.Array([], signature="v")
+            ), signature="(ia{sv}av)"))
+            self.menu_action_map[sub_app_id] = ("switch", (email, "desktop"))
+
+            sub_ide_id = item_id + 3
+            sub_children.append(dbus.Struct((
+                dbus.Int32(sub_ide_id),
+                dbus.Dictionary({"label": dbus.String("💻 Antigravity IDE Only"), "enabled": dbus.Boolean(True)}, signature="sv"),
+                dbus.Array([], signature="v")
+            ), signature="(ia{sv}av)"))
+            self.menu_action_map[sub_ide_id] = ("switch", (email, "ide"))
+
+            parent_id = item_id
+            children.append(dbus.Struct((
+                dbus.Int32(parent_id),
+                dbus.Dictionary({
+                    "label": dbus.String(f"🔄 Switch to {email} ({rem_pct:.1f}% available)"),
+                    "children-display": dbus.String("submenu"),
+                    "enabled": dbus.Boolean(True)
+                }, signature="sv"),
+                dbus.Array(sub_children, signature="v")
+            ), signature="(ia{sv}av)"))
+            self.menu_action_map[parent_id] = ("switch", (email, "both"))
+            item_id += 4
 
         # Separator
         children.append(dbus.Struct((
@@ -472,7 +630,7 @@ class TrayApplet:
                 dbus.Dictionary({"label": dbus.String(f"⚡ Auto-Switch to Best ({backup_candidate})"), "enabled": dbus.Boolean(True)}, signature="sv"),
                 dbus.Array([], signature="v")
             ), signature="(ia{sv}av)"))
-            self.menu_action_map[item_id] = ("switch", backup_candidate)
+            self.menu_action_map[item_id] = ("switch", (backup_candidate, "both"))
             item_id += 1
 
         # Separator
@@ -555,19 +713,24 @@ class TrayApplet:
         action, arg = action_data
 
         if action == "switch":
-            target_email = arg
+            if isinstance(arg, tuple):
+                target_email, surface = arg
+            else:
+                target_email, surface = arg, "both"
+
+            surface_name = "Both Surfaces" if surface == "both" else ("Desktop App" if surface in ("desktop", "app") else "Antigravity IDE")
             notifier.send_desktop_notification(
-                "⚡ Switching Antigravity Account",
-                f"Switching active session to {target_email}...\nRestarting Antigravity...",
+                f"⚡ Switching {surface_name}",
+                f"Switching {surface_name} to {target_email}...\nRestarting as needed...",
                 urgency="normal"
             )
             # Run in thread so D-Bus loop isn't blocked
             def do_switch():
-                success, msg = switcher.switch_to_account(target_email, restart=True)
+                success, msg = switcher.switch_to_account(target_email, restart=True, surface=surface)
                 if success:
                     notifier.send_desktop_notification(
                         "✓ Account Switched",
-                        f"Active account is now {target_email}!",
+                        f"Active {surface_name} is now {target_email}!",
                         urgency="normal"
                     )
                 else:

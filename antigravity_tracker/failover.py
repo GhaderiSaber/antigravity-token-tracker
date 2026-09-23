@@ -63,8 +63,21 @@ def get_account_primary_quota(account_data: Dict[str, Any]) -> Tuple[float, bool
     return final_pct, is_exhausted
 
 
+def get_active_sessions(analyzed_quotas: Dict[str, Dict[str, Any]]) -> Dict[str, Tuple[str, Dict[str, Any]]]:
+    """Finds accounts active in Antigravity Desktop App and Antigravity IDE separately.
+    Returns dict with optional keys 'desktop' and 'ide', each mapping to (email, quota_data).
+    """
+    sessions = {}
+    for email, q in analyzed_quotas.items():
+        if q.get("is_current_desktop_session"):
+            sessions["desktop"] = (email, q)
+        if q.get("is_current_ide_session"):
+            sessions["ide"] = (email, q)
+    return sessions
+
+
 def get_active_account(analyzed_quotas: Dict[str, Dict[str, Any]]) -> Optional[Tuple[str, Dict[str, Any]]]:
-    """Finds the account currently active in Antigravity Desktop App or IDE."""
+    """Finds the primary account currently active in Antigravity Desktop App or IDE."""
     for email, q in analyzed_quotas.items():
         if q.get("is_current_desktop_session"):
             return email, q
@@ -77,17 +90,24 @@ def get_active_account(analyzed_quotas: Dict[str, Dict[str, Any]]) -> Optional[T
 def find_best_failover_candidate(
     analyzed_quotas: Dict[str, Dict[str, Any]],
     current_email: Optional[str] = None,
+    exclude_emails: Optional[List[str]] = None,
     min_threshold_pct: float = 5.0
 ) -> Optional[Tuple[str, float]]:
     """Identifies the healthiest candidate account for failover.
-    Excludes current_email and requires saved session data and available quota."""
+    Excludes current_email / exclude_emails and requires saved session data and available quota."""
     registered = accounts.load_accounts()
-    current_clean = current_email.strip().lower() if current_email else ""
+    excludes = set()
+    if current_email:
+        excludes.add(current_email.strip().lower())
+    if exclude_emails:
+        for e in exclude_emails:
+            if e:
+                excludes.add(e.strip().lower())
 
     candidates = []
     for email, q in analyzed_quotas.items():
         email_clean = email.strip().lower()
-        if email_clean == current_clean:
+        if email_clean in excludes:
             continue
 
         # Candidate must have a saved snapshot or refresh token to be switchable
@@ -123,7 +143,13 @@ def get_failover_status(analyzed_quotas: Dict[str, Dict[str, Any]]) -> Dict[str,
     if active_pair:
         active_pct, is_active_exhausted = get_account_primary_quota(active_pair[1])
 
-    best_candidate = find_best_failover_candidate(analyzed_quotas, current_email=active_email)
+    active_sessions = get_active_sessions(analyzed_quotas)
+    active_emails = [pair[0] for pair in active_sessions.values() if pair]
+    best_candidate = find_best_failover_candidate(
+        analyzed_quotas,
+        current_email=active_email,
+        exclude_emails=active_emails
+    )
     state = load_failover_state()
 
     return {
@@ -187,7 +213,14 @@ def evaluate_and_execute_failover(
         }
 
     # 4. Find healthiest candidate
-    candidate = find_best_failover_candidate(analyzed_quotas, current_email=active_email, min_threshold_pct=5.0)
+    active_sessions = get_active_sessions(analyzed_quotas)
+    active_emails = [pair[0] for pair in active_sessions.values() if pair]
+    candidate = find_best_failover_candidate(
+        analyzed_quotas,
+        current_email=active_email,
+        exclude_emails=active_emails,
+        min_threshold_pct=5.0
+    )
     if not candidate:
         # All accounts depleted
         last_alert = state.get("all_exhausted_alerted_at", 0.0)
