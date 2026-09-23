@@ -1,10 +1,12 @@
 import os
 import json
+import mimetypes
 from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import urllib.parse
 from antigravity_tracker import accounts, quota, lifecycle
 
+FRONTEND_DIST_DIR = os.path.join(os.path.dirname(__file__), "frontend", "dist")
 HTML_TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "templates", "dashboard.html")
 
 
@@ -13,14 +15,45 @@ class DashboardHandler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
 
         if parsed.path == "/" or parsed.path == "/index.html":
-            if os.path.isfile(HTML_TEMPLATE_PATH):
+            dist_index = os.path.join(FRONTEND_DIST_DIR, "index.html")
+            if os.path.isfile(dist_index):
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                with open(dist_index, "rb") as f:
+                    self.wfile.write(f.read())
+            elif os.path.isfile(HTML_TEMPLATE_PATH):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache")
                 self.end_headers()
                 with open(HTML_TEMPLATE_PATH, "rb") as f:
                     self.wfile.write(f.read())
             else:
-                self.send_error(404, "Template not found")
+                self.send_error(404, "Dashboard template not found")
+
+        elif parsed.path.startswith("/assets/") or os.path.isfile(os.path.join(FRONTEND_DIST_DIR, parsed.path.lstrip("/"))):
+            clean_rel = parsed.path.lstrip("/")
+            file_path = os.path.abspath(os.path.join(FRONTEND_DIST_DIR, clean_rel))
+            if file_path.startswith(os.path.abspath(FRONTEND_DIST_DIR)) and os.path.isfile(file_path):
+                ctype, _ = mimetypes.guess_type(file_path)
+                if not ctype:
+                    if file_path.endswith(".js"): ctype = "application/javascript"
+                    elif file_path.endswith(".css"): ctype = "text/css"
+                    else: ctype = "application/octet-stream"
+
+                self.send_response(200)
+                self.send_header("Content-Type", f"{ctype}; charset=utf-8" if "text" in ctype or "javascript" in ctype else ctype)
+                if parsed.path.startswith("/assets/"):
+                    self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+                else:
+                    self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                with open(file_path, "rb") as f:
+                    self.wfile.write(f.read())
+            else:
+                self.send_error(404, "Asset not found")
 
         elif parsed.path == "/api/quota":
             query = urllib.parse.parse_qs(parsed.query)

@@ -1,4 +1,5 @@
 import unittest
+import os
 from unittest.mock import patch
 import json
 import urllib.request
@@ -32,8 +33,17 @@ class TestWebServer(unittest.TestCase):
             self.assertEqual(resp.status, 200)
             content = resp.read().decode("utf-8")
             self.assertIn("Antigravity Token & Quota Commander", content)
-            self.assertIn("Upcoming Quota Resets", content)
-            self.assertIn("Individual Model Quotas", content)
+            self.assertTrue('<div id="root"></div>' in content or "Upcoming Quota Resets" in content)
+
+    def test_static_assets_serving(self):
+        import glob
+        css_files = glob.glob("frontend/dist/assets/*.css")
+        if css_files:
+            rel_asset = os.path.basename(css_files[0])
+            url = f"http://127.0.0.1:{self.port}/assets/{rel_asset}"
+            with urllib.request.urlopen(url, timeout=5) as resp:
+                self.assertEqual(resp.status, 200)
+                self.assertIn("text/css", resp.headers.get("Content-Type", ""))
 
     @patch("antigravity_tracker.quota.fetch_all_accounts_quota")
     def test_api_quota_endpoint(self, mock_fetch):
