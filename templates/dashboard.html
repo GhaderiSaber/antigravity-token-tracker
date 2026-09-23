@@ -252,6 +252,43 @@
       gap: 6px;
     }
     .active-dot { width: 6px; height: 6px; background: #34a853; border-radius: 50%; }
+    .burn-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 600;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--surface-border);
+      cursor: default;
+      transition: all 0.2s ease;
+    }
+    .burn-badge:hover {
+      transform: translateY(-1px);
+    }
+    .burn-high {
+      background: rgba(234, 67, 53, 0.15);
+      border-color: rgba(234, 67, 53, 0.4);
+      color: #f28b82;
+    }
+    .burn-active {
+      background: rgba(251, 188, 4, 0.15);
+      border-color: rgba(251, 188, 4, 0.4);
+      color: #fdd663;
+    }
+    .burn-moderate {
+      background: rgba(66, 133, 244, 0.15);
+      border-color: rgba(66, 133, 244, 0.4);
+      color: #8ab4f8;
+    }
+    .burn-idle {
+      background: rgba(255, 255, 255, 0.04);
+      border-color: rgba(255, 255, 255, 0.1);
+      color: var(--text-muted);
+    }
     .grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -521,6 +558,21 @@
         }
       }
 
+      const burnrate = data.burnrate;
+      const activeMetrics = burnrate && burnrate.active_metrics;
+      const activePri = activeMetrics && activeMetrics.primary;
+      if (activePri && activePri.is_depleting && activePri.eta_seconds && activePri.eta_seconds < 10800) {
+        alertHtml += `
+          <div class="alert-banner" style="background: rgba(234, 67, 53, 0.15); border-color: rgba(234, 67, 53, 0.4); color: #f28b82;">
+            <span style="font-size: 20px;">⏱️</span>
+            <div>
+              <strong>Active Quota Burn Warning:</strong> Active account <strong>${burnrate.active_email || ''}</strong> is burning tokens at <strong>${activePri.velocity_pct_per_hour.toFixed(1)}%/hr</strong>.<br>
+              <span style="color:#f0f3f6;">Estimated empty in <strong>${activePri.eta_human}</strong> (at <strong>${activePri.depletion_time_str}</strong>). Consider auto-balancing or pacing usage.</span>
+            </div>
+          </div>
+        `;
+      }
+
       if (rec && (!failover || !failover.is_active_exhausted)) {
         alertHtml += `<div class="alert-banner"><span>💡</span> <div>${rec}</div></div>`;
       }
@@ -542,6 +594,34 @@
           activeBadge = '<div class="active-badge" style="background:rgba(128, 134, 139, 0.15); border-color:rgba(128, 134, 139, 0.3); color:#9aa0a6;"><div class="active-dot" style="background:#9aa0a6;"></div> Inactive</div>';
         }
 
+        const accBurn = burnrate && burnrate.accounts && burnrate.accounts[email];
+        const pri = accBurn && accBurn.primary;
+        let burnBadge = '';
+        if (pri) {
+          let burnClass = 'burn-idle';
+          if (pri.pace_status === 'HIGH BURN') burnClass = 'burn-high';
+          else if (pri.pace_status === 'ACTIVE') burnClass = 'burn-active';
+          else if (pri.pace_status === 'MODERATE') burnClass = 'burn-moderate';
+
+          let etaText = pri.is_depleting 
+            ? `Empty in ${pri.eta_human} (${pri.depletion_time_str})` 
+            : (pri.current_quota_pct <= 1.0 ? 'Exhausted' : 'Stable / Idle');
+
+          const w15 = (accBurn.windows && accBurn.windows['15m'] && accBurn.windows['15m'].velocity_pct_per_hour) || 0;
+          const w1h = (accBurn.windows && accBurn.windows['1h'] && accBurn.windows['1h'].velocity_pct_per_hour) || 0;
+          const w6h = (accBurn.windows && accBurn.windows['6h'] && accBurn.windows['6h'].velocity_pct_per_hour) || 0;
+          const tooltip = `Velocity Windows:\n15m (Burst): ${w15.toFixed(1)}%/h\n1h (Baseline): ${w1h.toFixed(1)}%/h\n6h (Sustained): ${w6h.toFixed(1)}%/h\nDatapoints: ${pri.datapoints}`;
+
+          burnBadge = `
+            <div class="burn-badge ${burnClass}" title="${tooltip}">
+              <span>${pri.pace_icon}</span>
+              <span>${pri.velocity_pct_per_hour.toFixed(1)}%/hr</span>
+              <span style="opacity:0.5;">•</span>
+              <span>⏱️ ${etaText}</span>
+            </div>
+          `;
+        }
+
         html += `
           <div class="account-card">
             <div class="account-header">
@@ -549,6 +629,7 @@
                 <div class="email">${acc.email}</div>
                 <div class="tier-badge">${acc.tier || 'Standard'}</div>
                 ${activeBadge}
+                ${burnBadge}
               </div>
               ${!isCurrentApp ? `
                 <button class="btn-switch" onclick="switchAccount('${acc.email}')">⚡ Switch to this Account</button>

@@ -26,12 +26,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
             all_quotas = quota.fetch_all_accounts_quota(force_refresh=False)
             analyzed = {e: lifecycle.analyze_account_lifecycle(q) for e, q in all_quotas.items()}
             rec = lifecycle.compute_switching_recommendation(analyzed)
-            from antigravity_tracker import failover, geo, shield, balancer
+            from antigravity_tracker import failover, geo, shield, balancer, burnrate
             failover_info = failover.get_failover_status(analyzed)
             geo_info = geo.get_ip_geo(force_refresh=False)
             shield_cfg = shield.load_shield_config()
             bal_cfg = balancer.load_balancer_config()
             bal_state = balancer.load_balancer_state()
+            try:
+                burnrate_info = burnrate.calculate_pool_burnrates(analyzed)
+            except Exception as be:
+                burnrate_info = {"error": str(be)}
 
             payload = {
                 "accounts": analyzed,
@@ -40,7 +44,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "geo": geo_info,
                 "shield": shield_cfg,
                 "balancer": bal_cfg,
-                "balancer_state": bal_state
+                "balancer_state": bal_state,
+                "burnrate": burnrate_info
             }
 
             data = json.dumps(payload).encode("utf-8")
@@ -49,6 +54,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             self.wfile.write(data)
+
+        elif parsed.path == "/api/burnrate":
+            from antigravity_tracker import burnrate
+            all_quotas = quota.fetch_all_accounts_quota(force_refresh=False)
+            analyzed = {e: lifecycle.analyze_account_lifecycle(q) for e, q in all_quotas.items()}
+            burn_info = burnrate.calculate_pool_burnrates(analyzed)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(json.dumps(burn_info).encode("utf-8"))
 
         elif parsed.path == "/api/shield":
             from antigravity_tracker import shield, geo

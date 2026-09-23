@@ -21,9 +21,10 @@ try:
     from . import geo
     from . import shield
     from . import balancer
+    from . import burnrate
 except (ImportError, ValueError):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from antigravity_tracker import accounts, quota, lifecycle, switcher, failover, notifier, geo, shield, balancer
+    from antigravity_tracker import accounts, quota, lifecycle, switcher, failover, notifier, geo, shield, balancer, burnrate
 
 ICON_CACHE_DIR = os.path.expanduser("~/.config/antigravity-token-tracker/icons")
 TRAY_LOCK_FILE = os.path.expanduser("~/.config/antigravity-token-tracker/tray.lock")
@@ -218,6 +219,7 @@ class TrayApplet:
         self.menu_object = None
         self.current_icon_name = "quota_100"
         self.analyzed_quotas: Dict[str, Dict[str, Any]] = {}
+        self.burnrate_data: Dict[str, Any] = {}
         self.geo_info: Dict[str, Any] = {}
         self.last_is_restricted = False
         self.menu_action_map: Dict[int, Any] = {}
@@ -257,7 +259,13 @@ class TrayApplet:
         email, q = active_pair
         pct, is_exh = failover.get_account_primary_quota(q)
         status_str = "EXHAUSTED" if is_exh else f"{pct:.1f}% remaining"
-        return f"{email}: {status_str}{geo_part}"
+
+        burn_part = ""
+        active_metrics = self.burnrate_data.get("active_metrics")
+        if active_metrics:
+            burn_part = burnrate.format_burnrate_tray_summary(active_metrics)
+
+        return f"{email}: {status_str}{burn_part}{geo_part}"
 
     def refresh_data(self, force: bool = False):
         """Fetches latest quotas and refreshes the tray icon and IP info."""
@@ -265,6 +273,12 @@ class TrayApplet:
             accounts.sync_from_antigravity()
             all_q = quota.fetch_all_accounts_quota(force_refresh=force)
             self.analyzed_quotas = {e: lifecycle.analyze_account_lifecycle(q) for e, q in all_q.items()}
+            try:
+                self.burnrate_data = burnrate.calculate_pool_burnrates(self.analyzed_quotas)
+            except Exception as be:
+                print(f"[Tray] Error computing burn rates: {be}")
+                self.burnrate_data = {}
+
             self.geo_info = geo.get_ip_geo(force_refresh=force)
 
             # Enforce IP Killswitch Shield
@@ -315,6 +329,35 @@ class TrayApplet:
                     children.append(dbus.Struct((
                         dbus.Int32(item_id),
                         dbus.Dictionary({"label": dbus.String(g_text), "enabled": dbus.Boolean(False)}, signature="sv"),
+                        dbus.Array([], signature="v")
+                    ), signature="(ia{sv}av)"))
+                    item_id += 1
+
+            # Runout Clock / Burn Rate
+            active_metrics = self.burnrate_data.get("active_metrics")
+            if active_metrics:
+                pri = active_metrics.get("primary", {})
+                if pri.get("is_depleting"):
+                    clock_text = f"  ⏱️ Runout: Empty in {pri.get('eta_human', '')} ({pri.get('depletion_time_str', '')}) [-{pri.get('velocity_pct_per_hour', 0.0):.1f}%/h]"
+                    children.append(dbus.Struct((
+                        dbus.Int32(item_id),
+                        dbus.Dictionary({"label": dbus.String(clock_text), "enabled": dbus.Boolean(False)}, signature="sv"),
+                        dbus.Array([], signature="v")
+                    ), signature="(ia{sv}av)"))
+                    item_id += 1
+                elif pri.get("current_quota_pct", 0.0) <= 1.0:
+                    clock_text = "  ⏱️ Runout: Quota Exhausted"
+                    children.append(dbus.Struct((
+                        dbus.Int32(item_id),
+                        dbus.Dictionary({"label": dbus.String(clock_text), "enabled": dbus.Boolean(False)}, signature="sv"),
+                        dbus.Array([], signature="v")
+                    ), signature="(ia{sv}av)"))
+                    item_id += 1
+                else:
+                    clock_text = "  ⏱️ Runout: Stable / Idle (<1%/h)"
+                    children.append(dbus.Struct((
+                        dbus.Int32(item_id),
+                        dbus.Dictionary({"label": dbus.String(clock_text), "enabled": dbus.Boolean(False)}, signature="sv"),
                         dbus.Array([], signature="v")
                     ), signature="(ia{sv}av)"))
                     item_id += 1

@@ -23,6 +23,7 @@ from . import failover
 from . import geo
 from . import shield
 from . import balancer
+from . import burnrate
 
 console = Console()
 
@@ -43,7 +44,7 @@ def create_progress_bar(pct: float, width: int = 24) -> str:
     return f"[{color}]{'█' * filled}{'░' * empty}[/{color}] {pct:>5.1f}%"
 
 
-def render_account_dashboard(analyzed_account: dict, show_models: bool = False):
+def render_account_dashboard(analyzed_account: dict, show_models: bool = False, burnrate_info: Optional[dict] = None):
     email = analyzed_account.get("email", "Unknown")
     name = analyzed_account.get("name", "")
     tier = analyzed_account.get("tier", "Standard")
@@ -64,6 +65,11 @@ def render_account_dashboard(analyzed_account: dict, show_models: bool = False):
         header_title += "  [dim yellow]● Inactive (Last Seen Quota)[/dim yellow]"
     else:
         header_title += "  [dim]● Inactive[/dim]"
+
+    # If burn rate information is available, append velocity badge
+    if burnrate_info:
+        badge_text = burnrate.format_burnrate_badge(burnrate_info)
+        header_title += f"  {badge_text}"
 
     table = Table(box=None, expand=True)
     table.add_column("Model Group", style="bold", ratio=2)
@@ -157,8 +163,23 @@ def cmd_status(args):
     console.print("[bold cyan]═══════════════════════════════════════════════════════════════════════════════[/bold cyan]")
     console.print()
 
+    # Compute Burn Rate Velocity & Runout Clocks
+    pool_burn = burnrate.calculate_pool_burnrates(analyzed)
+    active_burn = pool_burn.get("active_metrics")
+
     for email, a_q in analyzed.items():
-        render_account_dashboard(a_q, show_models=args.models)
+        acc_burn = pool_burn.get("accounts", {}).get(email)
+        render_account_dashboard(a_q, show_models=args.models, burnrate_info=acc_burn)
+
+    # Active Runout Clock Warning if rapidly depleting
+    if active_burn:
+        pri = active_burn.get("primary", {})
+        if pri.get("is_depleting"):
+            console.print(Panel(
+                f"[bold red]⏱️ Runout Clock Warning:[/bold red] Active session is burning [bold]{pri.get('velocity_pct_per_hour', 0.0):.1f}% quota/hr[/bold].\n"
+                f"Estimated depletion in [bold yellow]{pri.get('eta_human')}[/bold yellow] (around [bold white]{pri.get('depletion_time_str')}[/bold white]).",
+                border_style="yellow"
+            ))
 
     # Recommendation
     rec = lifecycle.compute_switching_recommendation(analyzed)
@@ -1054,6 +1075,106 @@ def cmd_balance(args):
     return 0
 
 
+def cmd_pace(args):
+    # Auto sync active IDE session if present
+    accounts.sync_from_antigravity()
+    all_quotas = quota.fetch_all_accounts_quota(force_refresh=getattr(args, "force", False))
+
+    if not all_quotas:
+        console.print("[yellow]No accounts found. Run `agy-token sync` to import from Antigravity IDE.[/yellow]")
+        return 0
+
+    analyzed = {e: lifecycle.analyze_account_lifecycle(q) for e, q in all_quotas.items()}
+    burn_data = burnrate.calculate_pool_burnrates(analyzed)
+
+    active_email = burn_data.get("active_email")
+    active_m = burn_data.get("active_metrics")
+
+    # Header Panel
+    console.print()
+    console.print("[bold cyan]═══════════════════════════════════════════════════════════════════════════════[/bold cyan]")
+    console.print("[bold white]            ⏱️ ANTIGRAVITY TOKEN BURN RATE & RUNOUT CLOCK                     [/bold white]")
+    console.print(f"[dim]                Current Local Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (UTC: {datetime.now(timezone.utc).strftime('%H:%M:%S')})[/dim]")
+    console.print("[bold cyan]═══════════════════════════════════════════════════════════════════════════════[/bold cyan]\n")
+
+    if active_email and active_m:
+        pri = active_m.get("primary", {})
+        win = active_m.get("windows", {})
+        v_15m = win.get("15m", {})
+        v_1h = win.get("1h", {})
+        v_6h = win.get("6h", {})
+
+        h_table = Table(box=None, expand=True)
+        h_table.add_column("Metric", style="bold cyan", ratio=1)
+        h_table.add_column("Value", ratio=2)
+
+        h_table.add_row("Active Session Account", f"[bold white]{active_email}[/bold white]")
+        h_table.add_row("Current Remaining Quota", f"[bold]{pri.get('current_quota_pct', 0.0):.1f}%[/bold]")
+
+        pace_badge = f"[{pri.get('pace_style')}]{pri.get('pace_icon')} {pri.get('pace_status')}[/{pri.get('pace_style')}]"
+        h_table.add_row("Consumption Pace", f"{pace_badge}  ({pri.get('velocity_pct_per_hour', 0.0):.1f}% / hr)")
+
+        if pri.get("is_depleting"):
+            eta_str = f"[bold yellow]{pri.get('eta_human')}[/bold yellow] (estimated empty at [bold white]{pri.get('depletion_time_str')}[/bold white])"
+        elif pri.get("current_quota_pct", 0.0) <= 1.0:
+            eta_str = "[bold red]Exhausted (0% remaining)[/bold red]"
+        else:
+            eta_str = "[green]Stable (minimal or no recent consumption)[/green]"
+        h_table.add_row("⏱️ Runout Clock (ETA)", eta_str)
+
+        # Multi-window velocity breakdown
+        pace_15m = f"{v_15m.get('velocity_pct_per_hour', 0.0):.1f}%/hr"
+        pace_1h = f"{v_1h.get('velocity_pct_per_hour', 0.0):.1f}%/hr"
+        pace_6h = f"{v_6h.get('velocity_pct_per_hour', 0.0):.1f}%/hr"
+        h_table.add_row("Multi-Window Velocity", f"Burst (15m): [bold]{pace_15m}[/bold]  |  Hourly (1h): [bold]{pace_1h}[/bold]  |  Daily (6h): [bold]{pace_6h}[/bold]")
+
+        console.print(Panel(h_table, title="⚡ Active Session Burn Rate & Runout Clock", border_style="cyan"))
+    else:
+        console.print("[dim]No active Antigravity session detected to track velocity.[/dim]\n")
+
+    # Pool Velocity Comparison Table
+    p_table = Table(title="📊 Account Pool Consumption Velocity & Projections", box=None)
+    p_table.add_column("Account Email", style="bold")
+    p_table.add_column("Quota", justify="right")
+    p_table.add_column("Hourly Burn", justify="right")
+    p_table.add_column("Pace Status", justify="center")
+    p_table.add_column("Runout Clock", justify="center")
+    p_table.add_column("Weekly Reset In", justify="right", style="dim")
+
+    for email, multi in burn_data.get("accounts", {}).items():
+        pri = multi.get("primary", {})
+        q_data = analyzed.get(email, {})
+        rem_pct, _ = failover.get_account_primary_quota(q_data)
+
+        # Weekly reset
+        reset_str = "N/A"
+        for g in q_data.get("groups", []):
+            w = g.get("weekly")
+            if w and "countdown" in w:
+                reset_str = w.get("countdown")
+                break
+
+        email_label = email
+        if active_email and email.lower() == active_email.lower():
+            email_label = f"● {email} [cyan](Active)[/cyan]"
+
+        vel_str = f"{pri.get('velocity_pct_per_hour', 0.0):.1f}%/h"
+        pace_lbl = f"[{pri.get('pace_style')}]{pri.get('pace_icon')} {pri.get('pace_status')}[/{pri.get('pace_style')}]"
+
+        if pri.get("is_depleting"):
+            eta_lbl = f"[yellow]{pri.get('eta_human')}[/yellow]"
+        elif rem_pct <= 1.0:
+            eta_lbl = "[red]Exhausted[/red]"
+        else:
+            eta_lbl = "[dim]Stable[/dim]"
+
+        p_table.add_row(email_label, f"{rem_pct:.1f}%", vel_str, pace_lbl, eta_lbl, reset_str)
+
+    console.print(Panel(p_table, border_style="blue"))
+    console.print("[dim]Tip: Burn rates are continuously calculated from rolling daemon snapshots. Run `agy-token status` for full quotas.[/dim]\n")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="agy-token",
@@ -1146,6 +1267,10 @@ def main():
     p_balance.add_argument("--dry-run", action="store_true", help="Simulate rotation without executing switch")
     p_balance.add_argument("--force", action="store_true", help="Bypass cooldown and balancer enabled check")
 
+    # pace / burn
+    p_pace = subparsers.add_parser("pace", aliases=["burn"], help="Display token burn rate velocity and Runout Clock prediction")
+    p_pace.add_argument("--force", action="store_true", help="Bypass cache and refresh quotas directly")
+
     args = parser.parse_args()
 
     # Default to status if no command given
@@ -1169,7 +1294,9 @@ def main():
         "switch": cmd_switch,
         "tray": cmd_tray,
         "doctor": cmd_doctor,
-        "balance": cmd_balance
+        "balance": cmd_balance,
+        "pace": cmd_pace,
+        "burn": cmd_pace
     }
 
     func = cmd_map.get(args.command)
