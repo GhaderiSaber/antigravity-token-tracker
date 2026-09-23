@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import webbrowser
 from typing import Dict, Any, Optional, Tuple, List
 from . import switcher
 from . import notifier
@@ -191,10 +192,14 @@ def evaluate_and_execute_failover(
         # All accounts depleted
         last_alert = state.get("all_exhausted_alerted_at", 0.0)
         if now - last_alert > 1800:  # Alert at most once per 30 minutes
+            actions = [
+                ("dashboard", "🌐 Open Dashboard", lambda: webbrowser.open("http://localhost:8765"))
+            ]
             notifier.send_desktop_notification(
                 "⚠️ Antigravity Quotas Depleted",
                 f"Active account {active_email} quota is finished ({active_pct:.1f}%), and no backup accounts have available quota.",
-                urgency="critical"
+                urgency="critical",
+                actions=actions
             )
             state["all_exhausted_alerted_at"] = now
             save_failover_state(state)
@@ -246,10 +251,14 @@ def evaluate_and_execute_failover(
         state["history"] = history[-50:]  # keep last 50
         save_failover_state(state)
 
+        actions = [
+            ("dashboard", "🌐 Open Dashboard", lambda: webbrowser.open("http://localhost:8765"))
+        ]
         notifier.send_desktop_notification(
             "✓ Auto-Failover Successful",
             f"Active Antigravity account is now {target_email} with {target_pct:.1f}% quota available!",
-            urgency="normal"
+            urgency="normal",
+            actions=actions
         )
 
         return {
@@ -261,10 +270,15 @@ def evaluate_and_execute_failover(
             "message": f"Successfully auto-failed over from {active_email} to {target_email} ({target_pct:.1f}% quota)."
         }
     else:
+        actions = [
+            ("retry", f"⚡ Retry {target_email}", lambda: notifier.trigger_action_switch(target_email)),
+            ("dashboard", "🌐 Open Dashboard", lambda: webbrowser.open("http://localhost:8765"))
+        ]
         notifier.send_desktop_notification(
             "❌ Auto-Failover Failed",
             f"Could not switch to {target_email}: {msg}",
-            urgency="critical"
+            urgency="critical",
+            actions=actions
         )
         return {
             "triggered": False,

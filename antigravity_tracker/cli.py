@@ -1175,6 +1175,59 @@ def cmd_pace(args):
     return 0
 
 
+def cmd_test_notify(args):
+    """Sends a sample interactive desktop notification with 1-click action buttons."""
+    console.print("\n[bold cyan]⚡ Dispatching Interactive Toast with 1-Click Action Buttons...[/bold cyan]")
+
+    all_q = quota.fetch_all_accounts_quota(force_refresh=False)
+    active_pair = failover.get_active_account(all_q)
+    active_email = active_pair[0] if active_pair else "current.session@gmail.com"
+
+    # Find a backup candidate to test switching
+    all_registered = accounts.list_accounts()
+    backup_email = None
+    for acc in all_registered:
+        e = acc.get("email", "")
+        if e.lower() != active_email.lower():
+            backup_email = e
+            break
+
+    target_email = backup_email or "backup.account@gmail.com"
+
+    actions = [
+        (
+            f"switch:{target_email}",
+            f"⚡ Switch to {target_email}",
+            lambda: notifier.trigger_action_switch(target_email)
+        ),
+        (
+            "dashboard",
+            "🌐 Open Dashboard",
+            notifier.trigger_action_dashboard
+        )
+    ]
+
+    nid = notifier.send_desktop_notification(
+        "⚡ Antigravity 1-Click Action Toast",
+        f"Active Session: {active_email}\nClick an action button below to test 1-click desktop control!",
+        urgency="normal",
+        actions=actions
+    )
+
+    if nid:
+        console.print(f"[bold green]✓ Interactive notification dispatched (ID: {nid}) via DBus![/bold green]")
+        console.print(f"  [dim]Look for the toast popup in your desktop top bar or notification center.[/dim]")
+        console.print(f"  [dim]Clicking '[bold cyan]⚡ Switch to {target_email}[/bold cyan]' will execute the account switch.[/dim]")
+        console.print("  [dim]Waiting 10 seconds for user action (Press Ctrl+C to exit)...[/dim]\n")
+        try:
+            time.sleep(10)
+        except KeyboardInterrupt:
+            pass
+    else:
+        console.print("[yellow]Notification sent via non-interactive fallback.[/yellow]\n")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="agy-token",
@@ -1271,6 +1324,9 @@ def main():
     p_pace = subparsers.add_parser("pace", aliases=["burn"], help="Display token burn rate velocity and Runout Clock prediction")
     p_pace.add_argument("--force", action="store_true", help="Bypass cache and refresh quotas directly")
 
+    # test-notify
+    subparsers.add_parser("test-notify", aliases=["notify-test", "test-toast"], help="Test 1-click desktop notification action buttons")
+
     args = parser.parse_args()
 
     # Default to status if no command given
@@ -1296,7 +1352,10 @@ def main():
         "doctor": cmd_doctor,
         "balance": cmd_balance,
         "pace": cmd_pace,
-        "burn": cmd_pace
+        "burn": cmd_pace,
+        "test-notify": cmd_test_notify,
+        "notify-test": cmd_test_notify,
+        "test-toast": cmd_test_notify
     }
 
     func = cmd_map.get(args.command)

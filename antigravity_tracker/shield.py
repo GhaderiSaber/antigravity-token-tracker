@@ -4,6 +4,7 @@ import json
 import time
 import signal
 import subprocess
+import webbrowser
 from typing import Dict, Any, List, Optional, Tuple
 
 from . import geo
@@ -175,6 +176,24 @@ def evaluate_and_enforce_shield(geo_info: Optional[Dict[str, Any]] = None) -> Di
 
     cfg = load_shield_config()
     if not cfg.get("enabled", True):
+        if geo_info is None:
+            geo_info = geo.get_ip_geo(force_refresh=False)
+        allowed, reason = is_ip_allowed(geo_info, cfg)
+        now = time.time()
+        cooldown = cfg.get("cooldown_seconds", 300)
+        if not allowed and (now - _LAST_TRIGGER_TIMESTAMP) > cooldown:
+            _LAST_TRIGGER_TIMESTAMP = now
+            flag = geo_info.get("flag", "⚠️")
+            actions = [
+                ("enable_shield", "🛡️ Enable IP Killswitch Now", lambda: set_shield_enabled(True)),
+                ("check_ip", "🌐 Test IP (ipwho.is)", lambda: webbrowser.open("https://ipwho.is"))
+            ]
+            notifier.send_desktop_notification(
+                "⚠️ RESTRICTED REGION DETECTED (Shield OFF)",
+                f"{flag} {reason}\nAntigravity is NOT protected. Click below to enable IP Killswitch.",
+                urgency="critical",
+                actions=actions
+            )
         return {"enabled": False, "violation": False, "message": "Shield disabled"}
 
     if geo_info is None:
@@ -204,10 +223,15 @@ def evaluate_and_enforce_shield(geo_info: Optional[Dict[str, Any]] = None) -> Di
             flag = geo_info.get("flag", "⚠️")
             ip = geo_info.get("ip", "Unknown")
             action_desc = "Terminated Antigravity processes" if action == "kill_process" else ("Blocked Internet" if action == "kill_network" else "Terminated Antigravity & Blocked Internet")
+            actions = [
+                ("check_ip", "🌐 Test IP (ipwho.is)", lambda: webbrowser.open("https://ipwho.is")),
+                ("dashboard", "🛡️ Open Dashboard", lambda: webbrowser.open("http://localhost:8765"))
+            ]
             notifier.send_desktop_notification(
                 "🚨 EMERGENCY IP KILLSWITCH TRIGGERED",
                 f"{flag} Reason: {reason}\n🛡️ Action: {action_desc} ({killed_count} processes killed)\n⚠️ Reconnect your VPN to restore Antigravity!",
-                urgency="critical"
+                urgency="critical",
+                actions=actions
             )
 
         return {
@@ -228,10 +252,14 @@ def evaluate_and_enforce_shield(geo_info: Optional[Dict[str, Any]] = None) -> Di
             flag = geo_info.get("flag", "🌐")
             ip = geo_info.get("ip", "Unknown")
             country = geo_info.get("country_name", "Unknown")
+            actions = [
+                ("dashboard", "🌐 Open Dashboard", lambda: webbrowser.open("http://localhost:8765"))
+            ]
             notifier.send_desktop_notification(
                 "✓ Safe Egress Restored",
                 f"{flag} Egress IP is now safe: {ip} ({country})\nAntigravity is safe to use.",
-                urgency="normal"
+                urgency="normal",
+                actions=actions
             )
             if cfg.get("auto_relaunch", False):
                 switcher.restart_antigravity()
