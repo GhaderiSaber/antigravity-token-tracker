@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import Header from './components/Header';
+import KpiSummaryRow from './components/KpiSummaryRow';
 import SurfaceSyncBanner from './components/SurfaceSyncBanner';
 import RefillTimeline from './components/RefillTimeline';
 import RunoutBanner from './components/RunoutBanner';
@@ -11,6 +12,19 @@ import DiagnosticsModal from './components/DiagnosticsModal';
 import { useLiveTicker, parseResetTimestamp } from './hooks/useLiveTicker';
 
 export default function App() {
+  const [theme, setTheme] = useState(() => {
+    return localStorage.getItem('agy_theme') || 'light';
+  });
+
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    localStorage.setItem('agy_theme', theme);
+  }, [theme]);
+
   const [data, setData] = useState(null);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -270,7 +284,12 @@ export default function App() {
         syncInterval={syncInterval}
         onIntervalChange={setSyncInterval}
         now={now}
+        theme={theme}
+        onToggleTheme={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
       />
+
+      {/* Executive KPI Summary Row */}
+      <KpiSummaryRow data={data} now={now} />
 
       {/* Surface Alignment Banner */}
       <SurfaceSyncBanner

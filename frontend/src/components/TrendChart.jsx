@@ -16,7 +16,7 @@ export default function TrendChart({ snapshots }) {
     if (s.accounts) Object.keys(s.accounts).forEach((e) => emails.add(e));
   });
 
-  const colors = ['#4285f4', '#34a853', '#fbbc04', '#9b51e0', '#ff6d00', '#00b0ff'];
+  const colors = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'];
   let colorIdx = 0;
 
   const lines = [];
@@ -47,13 +47,13 @@ export default function TrendChart({ snapshots }) {
   }
 
   return (
-    <section className="mb-6 p-4 rounded-xl border border-surface-border bg-surface shadow-sm">
+    <section className="mb-6 p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 shadow-sm transition-colors">
       <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2 font-bold text-sm text-gray-200">
-          <TrendingUp className="w-4 h-4 text-brand-blue" />
+        <div className="flex items-center gap-2 font-bold text-sm text-slate-800 dark:text-slate-200">
+          <TrendingUp className="w-4 h-4 text-blue-500" />
           <span>24-Hour Quota Burn Rate Trend</span>
         </div>
-        <span className="text-xs text-gray-400 font-mono">
+        <span className="text-xs text-slate-500 dark:text-slate-400 font-mono">
           {snapshots.length} snapshots recorded
         </span>
       </div>
@@ -61,9 +61,9 @@ export default function TrendChart({ snapshots }) {
       <div className="w-full overflow-hidden">
         <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-28 sm:h-32">
           {/* Grid lines */}
-          <line x1="0" y1={height - 15} x2={width} y2={height - 15} stroke="#232836" strokeWidth="1" />
-          <line x1="0" y1={height / 2} x2={width} y2={height / 2} stroke="#232836" strokeDasharray="4" strokeWidth="1" />
-          <line x1="0" y1="15" x2={width} y2="15" stroke="#232836" strokeDasharray="4" strokeWidth="1" />
+          <line x1="0" y1={height - 15} x2={width} y2={height - 15} className="stroke-slate-200 dark:stroke-slate-800" strokeWidth="1" />
+          <line x1="0" y1={height / 2} x2={width} y2={height / 2} className="stroke-slate-200 dark:stroke-slate-800" strokeDasharray="4" strokeWidth="1" />
+          <line x1="0" y1={15} x2={width} y2={15} className="stroke-slate-200 dark:stroke-slate-800" strokeDasharray="4" strokeWidth="1" />
 
           {/* Account Polylines */}
           {lines.map((l) => (
@@ -74,14 +74,14 @@ export default function TrendChart({ snapshots }) {
               strokeWidth="2.5"
               strokeLinejoin="round"
               points={l.points}
-              opacity="0.85"
+              opacity="0.9"
             />
           ))}
         </svg>
       </div>
 
       {/* Legend */}
-      <div className="flex flex-wrap items-center gap-3 mt-2 pt-2 border-t border-white/5 text-[11px] font-mono text-gray-400">
+      <div className="flex flex-wrap items-center gap-3 mt-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px] font-mono text-slate-500 dark:text-slate-400">
         {lines.map((l) => (
           <div key={l.email} className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: l.stroke }} />

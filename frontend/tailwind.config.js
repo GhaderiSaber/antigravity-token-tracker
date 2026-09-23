@@ -1,5 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+  darkMode: 'class',
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
@@ -7,24 +8,16 @@ export default {
   theme: {
     extend: {
       colors: {
-        background: '#090b0e',
-        surface: {
-          DEFAULT: '#11141a',
-          card: '#151821',
-          elevated: '#1a1e29',
-          border: '#232836',
-          'border-light': '#2e3446'
-        },
         brand: {
-          blue: '#4285f4',
-          purple: '#9b51e0',
-          green: '#34a853',
-          yellow: '#fbbc04',
-          red: '#ea4335'
+          blue: '#3b82f6',
+          purple: '#8b5cf6',
+          green: '#10b981',
+          yellow: '#f59e0b',
+          red: '#ef4444'
         }
       },
       fontFamily: {
-        sans: ['"Plus Jakarta Sans"', 'system-ui', 'sans-serif'],
+        sans: ['"Plus Jakarta Sans"', 'system-ui', '-apple-system', 'sans-serif'],
         mono: ['"JetBrains Mono"', 'monospace']
       }
     },

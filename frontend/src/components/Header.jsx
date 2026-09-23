@@ -1,5 +1,5 @@
 import React from 'react';
-import { Shield, RefreshCw, Zap, Stethoscope, Globe, Clock } from 'lucide-react';
+import { Shield, RefreshCw, Zap, Stethoscope, Globe, Clock, Sun, Moon } from 'lucide-react';
 
 export default function Header({
   data,
@@ -12,7 +12,9 @@ export default function Header({
   lastSyncedTime,
   syncInterval,
   onIntervalChange,
-  now
+  now,
+  theme,
+  onToggleTheme
 }) {
   const geo = data?.geo;
   const shield = data?.shield;
@@ -31,18 +33,18 @@ export default function Header({
   const syncedText = diffSec < 5 ? 'Synced: just now' : `Synced: ${diffSec}s ago`;
 
   return (
-    <header className="mb-6 pb-4 border-b border-surface-border">
+    <header className="mb-6 pb-4 border-b border-slate-200 dark:border-slate-800/80 transition-colors">
       <div className="flex flex-wrap items-center justify-between gap-4">
         {/* Brand */}
         <div className="flex items-center gap-3.5">
-          <div className="w-11 h-11 bg-gradient-to-br from-brand-blue to-brand-purple rounded-xl flex items-center justify-center text-xl shadow-lg shadow-brand-blue/20">
+          <div className="w-11 h-11 bg-gradient-to-br from-blue-600 to-indigo-600 text-white rounded-xl flex items-center justify-center text-xl shadow-md shadow-blue-500/20">
             ⚡
           </div>
           <div>
-            <h1 className="text-xl font-extrabold tracking-tight text-white flex items-center gap-2">
+            <h1 className="text-xl font-extrabold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
               Antigravity Token & Quota Commander
             </h1>
-            <p className="text-xs text-gray-400 font-mono">
+            <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">
               Weekly Account Token & Quota Lifecycle Monitor
             </p>
           </div>
@@ -56,26 +58,26 @@ export default function Header({
             title={`Egress: ${ipStr} | ${geo?.country_name || ''} (${geo?.isp || 'Direct'})\nClick to test IP`}
             className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono font-medium border transition-all ${
               isRestricted
-                ? 'border-brand-red/60 text-red-300 bg-brand-red/20 animate-pulse'
-                : 'border-brand-green/40 text-green-300 bg-brand-green/10 hover:border-brand-blue'
+                ? 'border-rose-400 text-rose-700 bg-rose-50 dark:bg-rose-950/40 dark:text-rose-300 animate-pulse'
+                : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:border-blue-400 shadow-sm'
             }`}
           >
             <span>{flag}</span>
-            <span>{ipStr}</span>
-            {location && <span className="opacity-70">({location})</span>}
+            <span className="font-semibold">{ipStr}</span>
+            {location && <span className="opacity-70 text-[11px]">({location})</span>}
           </button>
 
           {/* Shield Toggle */}
           <button
             onClick={onToggleShield}
             title={isShieldOn ? 'IP Shield ACTIVE: Click to toggle.' : 'IP Shield OFF: Click to enable.'}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono font-semibold border transition-all ${
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono font-semibold border transition-all shadow-sm ${
               isShieldOn
-                ? 'border-brand-blue/50 text-blue-300 bg-brand-blue/15 hover:border-brand-blue'
-                : 'border-gray-700 text-gray-400 bg-white/5 opacity-70 hover:opacity-100'
+                ? 'border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 hover:border-blue-400'
+                : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-400 hover:text-slate-700'
             }`}
           >
-            <Shield className="w-3.5 h-3.5" />
+            <Shield className="w-3.5 h-3.5 text-blue-500" />
             <span>Shield: {isShieldOn ? 'ACTIVE' : 'OFF'}</span>
           </button>
 
@@ -83,10 +85,10 @@ export default function Header({
           <button
             onClick={onToggleBalancer}
             title={isBalOn ? `Auto-Balancer: ${stratName}. Click to toggle.` : 'Auto-Balancer OFF.'}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono font-semibold border transition-all ${
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono font-semibold border transition-all shadow-sm ${
               isBalOn
-                ? 'border-brand-blue/50 text-blue-300 bg-brand-blue/15 hover:border-brand-blue'
-                : 'border-gray-700 text-gray-400 bg-white/5 opacity-70 hover:opacity-100'
+                ? 'border-purple-200 dark:border-purple-900 bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 hover:border-purple-400'
+                : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-400 hover:text-slate-700'
             }`}
           >
             <span className="text-sm">🔄</span>
@@ -96,26 +98,40 @@ export default function Header({
           {/* Diagnostics Modal Button */}
           <button
             onClick={onOpenDiagnostics}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-surface-card border border-surface-border hover:border-surface-border-light hover:bg-surface-elevated transition-all"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-700 shadow-sm transition-all"
           >
-            <Stethoscope className="w-3.5 h-3.5 text-brand-purple" />
+            <Stethoscope className="w-3.5 h-3.5 text-purple-500" />
             <span>Diagnostics</span>
+          </button>
+
+          {/* Theme Switcher Button */}
+          <button
+            onClick={onToggleTheme}
+            title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-700 shadow-sm transition-all"
+          >
+            {theme === 'dark' ? (
+              <Sun className="w-3.5 h-3.5 text-amber-400" />
+            ) : (
+              <Moon className="w-3.5 h-3.5 text-indigo-500" />
+            )}
+            <span className="hidden sm:inline">{theme === 'dark' ? 'Light' : 'Dark'}</span>
           </button>
 
           {/* Refresh Button */}
           <button
             onClick={onRefresh}
             disabled={isRefreshing}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-mono font-semibold bg-surface-elevated border border-surface-border hover:border-brand-blue transition-all disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-semibold bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-blue-400 shadow-sm transition-all disabled:opacity-50"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-brand-blue' : ''}`} />
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-blue-500' : ''}`} />
             <span>Refresh</span>
           </button>
 
           {/* Switch Best Button */}
           <button
             onClick={onSwitchBest}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold bg-gradient-to-r from-brand-blue to-brand-purple text-white shadow-lg shadow-brand-blue/20 hover:opacity-95 transition-all active:scale-95"
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-500/20 hover:opacity-95 transition-all active:scale-95"
           >
             <Zap className="w-3.5 h-3.5 fill-current" />
             <span>Auto-Switch Best</span>
@@ -124,15 +140,15 @@ export default function Header({
       </div>
 
       {/* Sub-bar with Live Clocks and Interval Control */}
-      <div className="flex flex-wrap items-center justify-between gap-4 mt-3 pt-3 text-xs text-gray-400 font-mono">
+      <div className="flex flex-wrap items-center justify-between gap-4 mt-3 pt-3 text-xs text-slate-500 dark:text-slate-400 font-mono">
         <div className="flex items-center gap-4">
           <span className="flex items-center gap-1.5">
-            <Clock className="w-3.5 h-3.5 text-gray-500" />
-            Local: <strong className="text-gray-200">{now.toLocaleTimeString()}</strong>
+            <Clock className="w-3.5 h-3.5 text-slate-400" />
+            Local: <strong className="text-slate-700 dark:text-slate-200">{now.toLocaleTimeString()}</strong>
           </span>
           <span className="flex items-center gap-1.5">
-            <Globe className="w-3.5 h-3.5 text-gray-500" />
-            UTC: <strong className="text-gray-200">{now.toISOString().substring(11, 19)}</strong>
+            <Globe className="w-3.5 h-3.5 text-slate-400" />
+            UTC: <strong className="text-slate-700 dark:text-slate-200">{now.toISOString().substring(11, 19)}</strong>
           </span>
         </div>
 
@@ -143,7 +159,7 @@ export default function Header({
             <select
               value={syncInterval}
               onChange={(e) => onIntervalChange(Number(e.target.value))}
-              className="bg-surface border border-surface-border text-gray-200 text-xs rounded px-2 py-0.5 outline-none focus:border-brand-blue"
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 text-xs rounded px-2 py-0.5 outline-none focus:border-blue-500 shadow-sm"
             >
               <option value={60}>1m</option>
               <option value={120}>2m</option>

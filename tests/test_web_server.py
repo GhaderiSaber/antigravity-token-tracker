@@ -45,8 +45,17 @@ class TestWebServer(unittest.TestCase):
                 self.assertEqual(resp.status, 200)
                 self.assertIn("text/css", resp.headers.get("Content-Type", ""))
 
+    @patch("antigravity_tracker.geo.get_ip_geo")
     @patch("antigravity_tracker.quota.fetch_all_accounts_quota")
-    def test_api_quota_endpoint(self, mock_fetch):
+    def test_api_quota_endpoint(self, mock_fetch, mock_geo):
+        mock_geo.return_value = {
+            "ip": "127.0.0.1",
+            "country_code": "US",
+            "country_name": "United States",
+            "city": "Local",
+            "flag": "🌐",
+            "is_restricted": False
+        }
         mock_fetch.return_value = {
             "test@example.com": {
                 "email": "test@example.com",
@@ -89,8 +98,17 @@ class TestWebServer(unittest.TestCase):
             self.assertIn("server_time_utc", data)
             self.assertIn("server_time_local", data)
 
+    @patch("antigravity_tracker.geo.get_ip_geo")
     @patch("antigravity_tracker.quota.fetch_all_accounts_quota")
-    def test_api_quota_force_refresh(self, mock_fetch):
+    def test_api_quota_force_refresh(self, mock_fetch, mock_geo):
+        mock_geo.return_value = {
+            "ip": "127.0.0.1",
+            "country_code": "US",
+            "country_name": "United States",
+            "city": "Local",
+            "flag": "🌐",
+            "is_restricted": False
+        }
         mock_fetch.return_value = {}
         url = f"http://127.0.0.1:{self.port}/api/quota?force=true"
         with urllib.request.urlopen(url, timeout=5) as resp:

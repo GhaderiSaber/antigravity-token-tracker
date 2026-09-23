@@ -11,15 +11,15 @@ export default function SurfaceSyncBanner({ activeSessions, onSyncSurfaces }) {
   }
 
   return (
-    <div className="mb-5 p-3.5 rounded-xl border border-brand-blue/30 bg-gradient-to-r from-brand-blue/15 via-brand-purple/10 to-transparent flex flex-wrap items-center justify-between gap-3 shadow-sm">
-      <div className="flex items-center gap-2.5 text-xs font-semibold text-blue-300">
-        <Layers className="w-4 h-4 text-brand-blue" />
+    <div className="mb-6 p-4 rounded-xl border border-blue-200 dark:border-blue-900/60 bg-blue-50/70 dark:bg-blue-950/30 flex flex-wrap items-center justify-between gap-3 shadow-sm transition-colors">
+      <div className="flex flex-wrap items-center gap-2.5 text-xs font-semibold text-blue-900 dark:text-blue-200">
+        <Layers className="w-4 h-4 text-blue-600 dark:text-blue-400" />
         <span>Split Surface Sessions:</span>
-        <span className="text-green-400">
+        <span className="text-emerald-700 dark:text-emerald-400">
           📱 Desktop App: <strong>{desktop.email}</strong> ({desktop.quota_pct?.toFixed(1)}%)
         </span>
-        <span className="text-gray-500">|</span>
-        <span className="text-blue-300">
+        <span className="text-slate-400">|</span>
+        <span className="text-blue-700 dark:text-blue-300">
           💻 IDE: <strong>{ide.email}</strong> ({ide.quota_pct?.toFixed(1)}%)
         </span>
       </div>
@@ -27,17 +27,17 @@ export default function SurfaceSyncBanner({ activeSessions, onSyncSurfaces }) {
       <div className="flex items-center gap-2">
         <button
           onClick={() => onSyncSurfaces('ide')}
-          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold bg-white/10 hover:bg-brand-blue/30 border border-white/15 hover:border-brand-blue text-white transition-all"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white dark:bg-slate-900 hover:bg-blue-50 dark:hover:bg-blue-950 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 shadow-sm transition-all"
         >
-          <ArrowRightLeft className="w-3 h-3 text-brand-blue" />
-          <span>Align IDE to App ({desktop.email})</span>
+          <ArrowRightLeft className="w-3 h-3 text-blue-500" />
+          <span>Align IDE to App ({desktop.email.split('@')[0]})</span>
         </button>
         <button
           onClick={() => onSyncSurfaces('desktop')}
-          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold bg-white/10 hover:bg-brand-blue/30 border border-white/15 hover:border-brand-blue text-white transition-all"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white dark:bg-slate-900 hover:bg-purple-50 dark:hover:bg-purple-950 border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 shadow-sm transition-all"
         >
-          <ArrowRightLeft className="w-3 h-3 text-brand-purple" />
-          <span>Align App to IDE ({ide.email})</span>
+          <ArrowRightLeft className="w-3 h-3 text-purple-500" />
+          <span>Align App to IDE ({ide.email.split('@')[0]})</span>
         </button>
       </div>
     </div>
