@@ -12,7 +12,7 @@ QUOTA_MODELS_URL = "https://daily-cloudcode-pa.googleapis.com/v1internal:retriev
 
 # In-memory cache per email: {email: (timestamp, data)}
 _QUOTA_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
-CACHE_TTL_SECONDS = 60  # 1 minute local cache
+CACHE_TTL_SECONDS = 600  # 10 minutes local cache for inactive accounts
 
 
 def get_historical_quota(email: str) -> Optional[Dict[str, Any]]:

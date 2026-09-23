@@ -145,9 +145,10 @@ export default function Header({
               onChange={(e) => onIntervalChange(Number(e.target.value))}
               className="bg-surface border border-surface-border text-gray-200 text-xs rounded px-2 py-0.5 outline-none focus:border-brand-blue"
             >
-              <option value={15}>15s</option>
-              <option value={30}>30s</option>
-              <option value={60}>60s</option>
+              <option value={60}>1m</option>
+              <option value={120}>2m</option>
+              <option value={300}>5m (Safe)</option>
+              <option value={600}>10m (Ultra-Safe)</option>
               <option value={0}>Off</option>
             </select>
           </label>

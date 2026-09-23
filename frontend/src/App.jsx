@@ -16,7 +16,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastSyncedTime, setLastSyncedTime] = useState(Date.now());
-  const [syncInterval, setSyncInterval] = useState(30);
+  const [syncInterval, setSyncInterval] = useState(300);
 
   const [currentFilter, setCurrentFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');

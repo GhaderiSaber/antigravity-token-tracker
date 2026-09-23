@@ -771,9 +771,10 @@
         <label style="display:flex; align-items:center; gap:6px;">
           <span>Auto-Sync:</span>
           <select id="autoSyncInterval" onchange="updateSyncInterval(this.value)" style="background:var(--surface); border:1px solid var(--surface-border); color:var(--text-main); font-size:11px; border-radius:4px; padding:2px 6px;">
-            <option value="15">15s</option>
-            <option value="30" selected>30s</option>
-            <option value="60">60s</option>
+            <option value="60">1m</option>
+            <option value="120">2m</option>
+            <option value="300" selected>5m (Safe)</option>
+            <option value="600">10m (Ultra-Safe)</option>
             <option value="0">Off</option>
           </select>
         </label>
@@ -1811,7 +1812,7 @@
 
     // Initialize Dashboard
     loadData(false);
-    updateSyncInterval(30);
+    updateSyncInterval(300);
     startLiveTicks();
   </script>
 </body>
