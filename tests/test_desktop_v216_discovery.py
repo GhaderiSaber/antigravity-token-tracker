@@ -83,10 +83,11 @@ class TestDesktopV216Discovery(unittest.TestCase):
         self.assertEqual(res["port"], 39000)
         self.assertEqual(res["csrf_token"], "fallback-token-999")
 
+    @patch("antigravity_tracker.accounts.upsert_account")
     @patch("antigravity_tracker.auth.discover_antigravity_desktop_app")
     @patch("antigravity_tracker.auth.discover_antigravity_ide")
     @patch("antigravity_tracker.auth.fetch_quota_from_desktop_app")
-    def test_fetch_account_quota_ide_fallback(self, mock_fetch_ls, mock_ide, mock_desk):
+    def test_fetch_account_quota_ide_fallback(self, mock_fetch_ls, mock_ide, mock_desk, mock_upsert):
         """Tests that fetch_account_quota uses the IDE language server when Desktop session doesn't match."""
         mock_desk.return_value = {"email": "other@example.com", "port": 38465, "csrf_token": "tok1"}
         mock_ide.return_value = {"email": "ide.user@example.com", "port": 43997, "csrf_token": "tok2"}
