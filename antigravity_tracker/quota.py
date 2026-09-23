@@ -109,6 +109,14 @@ def fetch_account_quota(account: Dict[str, Any], force_refresh: bool = False) ->
         csrf_token = desktop_session.get("csrf_token")
         quota_summary_data = auth.fetch_quota_from_desktop_app(port, csrf_token)
 
+    # Option A2: Check if account is actively running in Antigravity IDE
+    if not quota_summary_data:
+        ide_session = auth.discover_antigravity_ide()
+        if ide_session and ide_session.get("email") == email:
+            port = ide_session.get("port")
+            csrf_token = ide_session.get("csrf_token")
+            quota_summary_data = auth.fetch_quota_from_desktop_app(port, csrf_token)
+
     # Option B: Query Google CloudCode directly using OAuth token
     if not quota_summary_data and (account.get("access_token") or account.get("refresh_token")):
         token, updated_acc = auth.ensure_valid_token(account)
@@ -119,7 +127,7 @@ def fetch_account_quota(account: Dict[str, Any], force_refresh: bool = False) ->
             headers = {
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
-                "User-Agent": "antigravity/2.15.1"
+                "User-Agent": "antigravity/2.16.0"
             }
 
             try:
