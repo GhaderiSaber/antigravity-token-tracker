@@ -394,6 +394,38 @@ def restart_antigravity() -> bool:
     return False
 
 
+def _record_switch_state(from_email: Optional[str], target_email: str, surface: str):
+    """Updates failover, balancer, and notifier state on successful manual switch."""
+    now_ts = time.time()
+    try:
+        from . import failover
+        fstate = failover.load_failover_state()
+        fstate["last_failover_timestamp"] = now_ts
+        if from_email:
+            fstate["last_from_email"] = from_email
+        fstate["last_to_email"] = target_email
+        failover.save_failover_state(fstate)
+    except Exception:
+        pass
+
+    try:
+        from . import balancer
+        bstate = balancer.load_balancer_state()
+        bstate["last_rotation_timestamp"] = now_ts
+        if from_email:
+            bstate["last_from_email"] = from_email
+        bstate["last_to_email"] = target_email
+        balancer.save_balancer_state(bstate)
+    except Exception:
+        pass
+
+    try:
+        from . import notifier
+        notifier.record_account_switched(from_email, target_email)
+    except Exception:
+        pass
+
+
 def switch_to_account(target_email: str, restart: bool = True, surface: str = "both") -> Tuple[bool, str]:
     """Switches the active session to target_email.
     surface: 'both' (default), 'desktop' (or 'app'), or 'ide'.
@@ -421,6 +453,8 @@ def switch_to_account(target_email: str, restart: bool = True, surface: str = "b
                 current_desktop_email = em
             if acc.get("is_current_ide_session"):
                 current_ide_email = em
+
+    primary_from_email = current_desktop_email if do_desktop else current_ide_email
 
     # Check if target surface(s) are already aligned
     is_desktop_aligned = (current_desktop_email == target_clean)
@@ -465,6 +499,7 @@ def switch_to_account(target_email: str, restart: bool = True, surface: str = "b
 
     if not do_desktop and do_ide:
         if restored_ide:
+            _record_switch_state(primary_from_email, target_clean, surface)
             return True, f"✓ Switched Antigravity IDE session to {target_clean}! (Desktop App remains untouched)"
         else:
             return False, (
@@ -473,6 +508,7 @@ def switch_to_account(target_email: str, restart: bool = True, surface: str = "b
             )
     elif do_desktop and not do_ide:
         if has_keyring_snap or has_refresh_token or restored_desktop:
+            _record_switch_state(primary_from_email, target_clean, surface)
             return True, f"✓ Switched Antigravity Desktop App session to {target_clean}! (IDE remains untouched)"
         else:
             return False, (
@@ -481,10 +517,13 @@ def switch_to_account(target_email: str, restart: bool = True, surface: str = "b
             )
     else:
         if is_desktop_aligned and restored_ide:
+            _record_switch_state(primary_from_email, target_clean, surface)
             return True, f"✓ Synchronized IDE session to match desktop account {target_clean}!"
         elif has_keyring_snap or has_refresh_token or restored_ide:
+            _record_switch_state(primary_from_email, target_clean, surface)
             return True, f"✓ Switched active session to {target_clean}!"
         elif restored_desktop:
+            _record_switch_state(primary_from_email, target_clean, surface)
             return True, (
                 f"✓ Prepared Antigravity session for {target_clean}.\n"
                 f"Please click 'Sign In' in Antigravity to authenticate. Once logged in, its token will be automatically captured for future 1-click switching!"

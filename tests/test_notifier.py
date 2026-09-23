@@ -160,6 +160,85 @@ class TestNotifier(unittest.TestCase):
         self.assertTrue(any("backup@example.com" in l for l in action_labels))
         self.assertTrue(any("Dashboard" in l for l in action_labels))
 
+    @patch("antigravity_tracker.notifier.send_desktop_notification")
+    def test_check_and_notify_lifecycle_events_inactive_account_not_alerted(self, mock_notify):
+        # Account is exhausted, but NOT active in desktop or ide
+        analyzed_quotas = {
+            "inactive@example.com": {
+                "email": "inactive@example.com",
+                "is_current_desktop_session": False,
+                "is_current_ide_session": False,
+                "groups": [
+                    {
+                        "displayName": "Gemini Models",
+                        "weekly": {"remainingPercent": 0.2, "countdown": "3h"}
+                    }
+                ]
+            }
+        }
+        init_state = {
+            "inactive@example.com": {
+                "Gemini Models-weekly": {"status": "OK", "pct": 40.0}
+            }
+        }
+        notifier.save_notification_state(init_state)
+
+        notifier.check_and_notify_lifecycle_events(analyzed_quotas)
+        # Must NOT notify because the account is inactive
+        self.assertFalse(mock_notify.called)
+
+    @patch("antigravity_tracker.notifier.send_desktop_notification")
+    def test_check_and_notify_lifecycle_events_recently_switched_suppressed(self, mock_notify):
+        # Account is marked active, but was recently switched away from
+        notifier.record_account_switched(from_email="old@example.com", to_email="new@example.com")
+        analyzed_quotas = {
+            "old@example.com": {
+                "email": "old@example.com",
+                "is_current_desktop_session": True,
+                "groups": [
+                    {
+                        "displayName": "Gemini Models",
+                        "weekly": {"remainingPercent": 0.2, "countdown": "3h"}
+                    }
+                ]
+            }
+        }
+        init_state = {
+            "old@example.com": {
+                "Gemini Models-weekly": {"status": "OK", "pct": 40.0}
+            }
+        }
+        state = notifier.load_notification_state()
+        state.update(init_state)
+        notifier.save_notification_state(state)
+
+        notifier.check_and_notify_lifecycle_events(analyzed_quotas)
+        # Suppressed because old@example.com was switched away from within cooldown
+        self.assertFalse(mock_notify.called)
+
+    @patch("antigravity_tracker.notifier.send_desktop_notification")
+    def test_check_and_notify_lifecycle_events_baseline_no_alert(self, mock_notify):
+        # Empty state (first run) - should initialize baseline without firing alert
+        analyzed_quotas = {
+            "first_run@example.com": {
+                "email": "first_run@example.com",
+                "is_current_desktop_session": True,
+                "groups": [
+                    {
+                        "displayName": "Gemini Models",
+                        "weekly": {"remainingPercent": 0.5, "countdown": "1h"}
+                    }
+                ]
+            }
+        }
+        notifier.check_and_notify_lifecycle_events(analyzed_quotas)
+        self.assertFalse(mock_notify.called)
+
+        # But state was recorded
+        state = notifier.load_notification_state()
+        self.assertIn("first_run@example.com", state)
+        self.assertEqual(state["first_run@example.com"]["Gemini Models-weekly"]["status"], "EXHAUSTED")
+
 
 if __name__ == "__main__":
     unittest.main()

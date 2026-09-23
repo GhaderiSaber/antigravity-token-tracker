@@ -176,20 +176,40 @@ def evaluate_and_execute_failover(
     state = load_failover_state()
     now = time.time()
 
-    # 1. Check active account
-    active_pair = get_active_account(analyzed_quotas)
-    if not active_pair:
-        return {
-            "triggered": False,
-            "reason": "NO_ACTIVE_ACCOUNT",
-            "message": "No active Antigravity session detected."
-        }
+    # 1. Check active sessions across surfaces
+    active_sessions = get_active_sessions(analyzed_quotas)
+    if not active_sessions:
+        active_pair = get_active_account(analyzed_quotas)
+        if not active_pair:
+            return {
+                "triggered": False,
+                "reason": "NO_ACTIVE_ACCOUNT",
+                "message": "No active Antigravity session detected."
+            }
+        active_sessions = {"desktop": active_pair}
 
-    active_email, active_data = active_pair
-    active_pct, _ = get_account_primary_quota(active_data)
+    desktop_pair = active_sessions.get("desktop")
+    ide_pair = active_sessions.get("ide")
 
-    # 2. Check if active account is below threshold
-    if active_pct > threshold:
+    depleted_surfaces = []
+    if desktop_pair and desktop_pair[0]:
+        d_email, d_data = desktop_pair
+        d_pct, _ = get_account_primary_quota(d_data)
+        if d_pct <= threshold:
+            depleted_surfaces.append(("desktop", d_email, d_pct))
+
+    if ide_pair and ide_pair[0]:
+        i_email, i_data = ide_pair
+        i_pct, _ = get_account_primary_quota(i_data)
+        if i_pct <= threshold:
+            if not (desktop_pair and desktop_pair[0].lower() == i_email.lower()):
+                depleted_surfaces.append(("ide", i_email, i_pct))
+
+    # 2. Check if all active accounts are above threshold
+    if not depleted_surfaces:
+        active_pair = get_active_account(analyzed_quotas)
+        active_email = active_pair[0] if active_pair else "Unknown"
+        active_pct, _ = get_account_primary_quota(active_pair[1]) if active_pair else (100.0, False)
         return {
             "triggered": False,
             "reason": "HEALTHY",
@@ -197,6 +217,13 @@ def evaluate_and_execute_failover(
             "active_pct": active_pct,
             "message": f"Active account {active_email} has sufficient quota ({active_pct:.1f}% > {threshold}%)."
         }
+
+    # Pick the depleted surface
+    is_both = (desktop_pair and ide_pair and desktop_pair[0].lower() == ide_pair[0].lower() and len(depleted_surfaces) == 1) or len(depleted_surfaces) > 1
+    target_surface = "both" if is_both else depleted_surfaces[0][0]
+    active_email = depleted_surfaces[0][1]
+    active_pct = depleted_surfaces[0][2]
+    surface_label = "Desktop App" if target_surface == "desktop" else ("Antigravity IDE" if target_surface == "ide" else "Antigravity")
 
     # 3. Check anti-flapping cooldown
     last_ts = state.get("last_failover_timestamp", 0.0)
@@ -213,8 +240,7 @@ def evaluate_and_execute_failover(
         }
 
     # 4. Find healthiest candidate
-    active_sessions = get_active_sessions(analyzed_quotas)
-    active_emails = [pair[0] for pair in active_sessions.values() if pair]
+    active_emails = [pair[0] for pair in active_sessions.values() if pair and pair[0]]
     candidate = find_best_failover_candidate(
         analyzed_quotas,
         current_email=active_email,
@@ -229,8 +255,8 @@ def evaluate_and_execute_failover(
                 ("dashboard", "🌐 Open Dashboard", lambda: webbrowser.open("http://localhost:8765"))
             ]
             notifier.send_desktop_notification(
-                "⚠️ Antigravity Quotas Depleted",
-                f"Active account {active_email} quota is finished ({active_pct:.1f}%), and no backup accounts have available quota.",
+                f"⚠️ Antigravity Quotas Depleted ({surface_label})",
+                f"Active account {active_email} in {surface_label} quota is finished ({active_pct:.1f}%), and no backup accounts have available quota.",
                 urgency="critical",
                 actions=actions
             )
@@ -242,7 +268,7 @@ def evaluate_and_execute_failover(
             "reason": "ALL_ACCOUNTS_DEPLETED",
             "active_email": active_email,
             "active_pct": active_pct,
-            "message": f"Active account {active_email} is exhausted, but no backup accounts have available quota."
+            "message": f"Active account {active_email} in {surface_label} is exhausted, but no backup accounts have available quota."
         }
 
     target_email, target_pct = candidate
@@ -255,17 +281,18 @@ def evaluate_and_execute_failover(
             "from_account": active_email,
             "to_account": target_email,
             "to_quota_pct": target_pct,
-            "message": f"[DRY RUN] Would switch from {active_email} ({active_pct:.1f}%) to {target_email} ({target_pct:.1f}%)."
+            "surface": target_surface,
+            "message": f"[DRY RUN] Would switch {surface_label} from {active_email} ({active_pct:.1f}%) to {target_email} ({target_pct:.1f}%)."
         }
 
     # 5. Execute failover with user desktop notifications
     notifier.send_desktop_notification(
-        "⚡ Auto-Failover: Quota Exhausted",
-        f"Quota depleted on {active_email} ({active_pct:.1f}%).\nSwitching session to {target_email} ({target_pct:.1f}% available)...",
+        f"⚡ Auto-Failover: {surface_label} Quota Exhausted",
+        f"Quota depleted on {active_email} ({active_pct:.1f}%).\nSwitching {surface_label} to {target_email} ({target_pct:.1f}% available)...",
         urgency="critical"
     )
 
-    success, msg = switcher.switch_to_account(target_email, restart=restart)
+    success, msg = switcher.switch_to_account(target_email, restart=restart, surface=target_surface)
 
     if success:
         # Update failover state
@@ -289,7 +316,7 @@ def evaluate_and_execute_failover(
         ]
         notifier.send_desktop_notification(
             "✓ Auto-Failover Successful",
-            f"Active Antigravity account is now {target_email} with {target_pct:.1f}% quota available!",
+            f"Active {surface_label} account is now {target_email} with {target_pct:.1f}% quota available!",
             urgency="normal",
             actions=actions
         )
@@ -300,7 +327,8 @@ def evaluate_and_execute_failover(
             "from_account": active_email,
             "to_account": target_email,
             "to_quota_pct": target_pct,
-            "message": f"Successfully auto-failed over from {active_email} to {target_email} ({target_pct:.1f}% quota)."
+            "surface": target_surface,
+            "message": f"Successfully auto-failed over {surface_label} from {active_email} to {target_email} ({target_pct:.1f}% quota)."
         }
     else:
         actions = [

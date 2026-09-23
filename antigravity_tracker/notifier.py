@@ -277,8 +277,21 @@ def save_notification_state(state: Dict[str, Any]):
         pass
 
 
+def record_account_switched(from_email: Optional[str], to_email: str):
+    """Records an account switch in notification state to suppress stale depletion notifications."""
+    state = load_notification_state()
+    switched_from = state.get("switched_from", {})
+    if from_email:
+        switched_from[from_email.strip().lower()] = time.time()
+    state["switched_from"] = switched_from
+    state["last_switch_timestamp"] = time.time()
+    state["current_active_email"] = to_email.strip().lower()
+    save_notification_state(state)
+
+
 def check_and_notify_lifecycle_events(analyzed_quotas: Dict[str, Dict[str, Any]]):
-    """Detects quota exhaustion and weekly refresh transitions, and fires desktop notifications with 1-click action buttons."""
+    """Detects quota exhaustion and weekly refresh transitions on ACTIVE accounts,
+    and fires desktop notifications with 1-click action buttons."""
     state = load_notification_state()
 
     try:
@@ -288,7 +301,24 @@ def check_and_notify_lifecycle_events(analyzed_quotas: Dict[str, Dict[str, Any]]
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         from antigravity_tracker import failover
 
+    active_sessions = failover.get_active_sessions(analyzed_quotas)
+    active_emails = {pair[0].lower() for pair in active_sessions.values() if pair and pair[0]}
+
+    switched_from = state.get("switched_from", {})
+    now_ts = time.time()
+
     for email, q in analyzed_quotas.items():
+        email_clean = email.strip().lower()
+        is_desktop = bool(q.get("is_current_desktop_session"))
+        is_ide = bool(q.get("is_current_ide_session"))
+        is_active = is_desktop or is_ide or (email_clean in active_emails)
+
+        # If this account was recently switched away from, suppress exhaustion/low alerts
+        if email_clean in switched_from and (now_ts - switched_from[email_clean]) < 300:
+            is_active = False
+
+        surface_name = "Desktop App & IDE" if (is_desktop and is_ide) else ("Desktop App" if is_desktop else ("Antigravity IDE" if is_ide else "Active Session"))
+
         acc_state = state.get(email, {})
         for g in q.get("groups", []):
             g_name = g.get("displayName", "")
@@ -303,12 +333,21 @@ def check_and_notify_lifecycle_events(analyzed_quotas: Dict[str, Dict[str, Any]]
 
             countdown = w.get("countdown", "")
 
-            # Event 1: Token exhaustion
-            if curr_status == "EXHAUSTED" and prev_status != "EXHAUSTED":
-                title = f"⚠️ Antigravity Quota Depleted: {email}"
+            # Baseline initialization: do not fire depletion notifications on first observation
+            if prev_status is None:
+                pass
+
+            # Event 1: Token exhaustion on an ACTIVE session
+            elif is_active and curr_status == "EXHAUSTED" and prev_status != "EXHAUSTED":
+                title = f"⚠️ Antigravity Quota Depleted ({surface_name}): {email}"
                 msg = f"{g_name} weekly tokens are FINISHED ({curr_pct:.1f}%).\nFull refresh in {countdown}."
 
-                candidate = failover.find_best_failover_candidate(analyzed_quotas, current_email=email, min_threshold_pct=5.0)
+                candidate = failover.find_best_failover_candidate(
+                    analyzed_quotas,
+                    current_email=email,
+                    exclude_emails=list(active_emails),
+                    min_threshold_pct=5.0
+                )
                 actions = []
                 if candidate:
                     best_email, best_pct = candidate
@@ -325,12 +364,17 @@ def check_and_notify_lifecycle_events(analyzed_quotas: Dict[str, Dict[str, Any]]
 
                 send_desktop_notification(title, msg, urgency="critical", actions=actions)
 
-            # Event 2: Low quota warning (e.g. dropped from OK to LOW <= 10%)
-            elif curr_status == "LOW" and prev_status == "OK":
-                title = f"⚠️ Low Quota Warning: {email}"
+            # Event 2: Low quota warning on an ACTIVE session (dropped from OK to LOW <= 10%)
+            elif is_active and curr_status == "LOW" and prev_status == "OK":
+                title = f"⚠️ Low Quota Warning ({surface_name}): {email}"
                 msg = f"{g_name} weekly tokens are down to {curr_pct:.1f}% remaining."
 
-                candidate = failover.find_best_failover_candidate(analyzed_quotas, current_email=email, min_threshold_pct=5.0)
+                candidate = failover.find_best_failover_candidate(
+                    analyzed_quotas,
+                    current_email=email,
+                    exclude_emails=list(active_emails),
+                    min_threshold_pct=5.0
+                )
                 actions = []
                 if candidate:
                     best_email, best_pct = candidate
@@ -347,7 +391,7 @@ def check_and_notify_lifecycle_events(analyzed_quotas: Dict[str, Dict[str, Any]]
 
                 send_desktop_notification(title, msg, urgency="normal", actions=actions)
 
-            # Event 3: Token refresh (was previously exhausted or low, now >= 50%)
+            # Event 3: Token refresh (can be on any account, including inactive backups)
             elif curr_pct >= 50.0 and prev_status in ["EXHAUSTED", "LOW"]:
                 title = f"🎉 Antigravity Tokens Refreshed: {email}"
                 msg = f"Your weekly limit for {g_name} has just refreshed ({curr_pct:.1f}% available)!"
