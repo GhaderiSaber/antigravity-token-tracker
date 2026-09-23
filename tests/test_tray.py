@@ -144,13 +144,12 @@ class TestTrayApplet(unittest.TestCase):
         self.assertTrue(any("Sync Surfaces: Align IDE to App" in l for l in labels))
         self.assertTrue(any("Sync Surfaces: Align App to IDE" in l for l in labels))
 
-        # Assert action map contains targeted sync actions
+        # Assert action map contains targeted sync actions and dashboard actions
         actions = list(applet.menu_action_map.values())
         self.assertIn(("switch", ("app@example.com", "ide")), actions)
         self.assertIn(("switch", ("ide@example.com", "desktop")), actions)
         self.assertIn(("switch", ("standby@example.com", "both")), actions)
-        self.assertIn(("switch", ("standby@example.com", "desktop")), actions)
-        self.assertIn(("switch", ("standby@example.com", "ide")), actions)
+        self.assertIn(("web", None), actions)
 
     def test_singleton_lock_acquisition_and_duplicate_prevention(self):
         import tempfile
