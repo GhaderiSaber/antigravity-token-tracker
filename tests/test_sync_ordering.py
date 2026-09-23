@@ -104,6 +104,47 @@ class TestSyncAndOrdering(unittest.TestCase):
             result = switcher.snapshot_ide_session("saber@example.com")
             self.assertFalse(result)
 
+    @patch("antigravity_tracker.switcher.restore_desktop_session")
+    @patch("antigravity_tracker.switcher.restore_ide_session")
+    @patch("antigravity_tracker.switcher.snapshot_desktop_session")
+    @patch("antigravity_tracker.switcher.snapshot_ide_session")
+    @patch("antigravity_tracker.switcher.is_antigravity_running", return_value=False)
+    @patch("antigravity_tracker.accounts.sync_from_antigravity")
+    @patch("antigravity_tracker.accounts.load_accounts")
+    @patch("antigravity_tracker.auth.discover_antigravity_desktop_app")
+    @patch("antigravity_tracker.auth.discover_antigravity_ide")
+    def test_switch_surface_targeting(self, mock_ide, mock_desk, mock_accs, mock_sync, mock_run,
+                                       mock_snap_ide, mock_snap_desk, mock_rest_ide, mock_rest_desk):
+        mock_accs.return_value = {
+            "saber@example.com": {"email": "saber@example.com", "refresh_token": "tok1"},
+            "duzen@example.com": {"email": "duzen@example.com", "refresh_token": "tok2"}
+        }
+        mock_desk.return_value = {"email": "saber@example.com"}
+        mock_ide.return_value = {"email": "saber@example.com"}
+        mock_rest_desk.return_value = True
+        mock_rest_ide.return_value = True
+
+        # Test desktop-only switch to duzen
+        with patch("os.path.isdir", return_value=True), patch("os.path.isfile", return_value=True):
+            ok, msg = switcher.switch_to_account("duzen@example.com", restart=False, surface="desktop")
+            self.assertTrue(ok)
+            self.assertIn("Desktop App session", msg)
+            self.assertIn("IDE remains untouched", msg)
+            mock_rest_desk.assert_called_with("duzen@example.com")
+            mock_rest_ide.assert_not_called()
+
+        mock_rest_desk.reset_mock()
+        mock_rest_ide.reset_mock()
+
+        # Test ide-only switch to duzen
+        with patch("os.path.isdir", return_value=True), patch("os.path.isfile", return_value=True):
+            ok, msg = switcher.switch_to_account("duzen@example.com", restart=False, surface="ide")
+            self.assertTrue(ok)
+            self.assertIn("IDE session", msg)
+            self.assertIn("Desktop App remains untouched", msg)
+            mock_rest_ide.assert_called_with("duzen@example.com")
+            mock_rest_desk.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

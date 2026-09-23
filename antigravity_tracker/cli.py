@@ -741,8 +741,22 @@ def cmd_switch(args):
             console.print("[dim]Switch cancelled.[/dim]")
             return 0
 
-    console.print(f"[cyan]Switching session to:[/cyan] [bold]{target_email}[/bold]...")
-    success, msg = switcher.switch_to_account(target_email, restart=not args.no_restart)
+    surface = "both"
+    if getattr(args, "surface_app", False) and getattr(args, "surface_ide", False):
+        surface = "both"
+    elif getattr(args, "surface_app", False):
+        surface = "desktop"
+    elif getattr(args, "surface_ide", False):
+        surface = "ide"
+
+    surface_tag = ""
+    if surface == "desktop":
+        surface_tag = " [dim](Desktop App only)[/dim]"
+    elif surface == "ide":
+        surface_tag = " [dim](IDE only)[/dim]"
+
+    console.print(f"[cyan]Switching session to:[/cyan] [bold]{target_email}[/bold]{surface_tag}...")
+    success, msg = switcher.switch_to_account(target_email, restart=not args.no_restart, surface=surface)
     if success:
         console.print(f"[green]{msg}[/green]")
         return 0
@@ -1337,6 +1351,8 @@ def main():
     p_switch = subparsers.add_parser("switch", help="Instantly switch active account session")
     p_switch.add_argument("target", nargs="?", default=None, help="Email, number [1-N], or partial name (opens interactive menu if omitted)")
     p_switch.add_argument("--auto", action="store_true", help="Auto-switch to account with highest available quota without prompting")
+    p_switch.add_argument("--desktop", "--app", dest="surface_app", action="store_true", help="Switch only the Antigravity Desktop App session (leave IDE untouched)")
+    p_switch.add_argument("--ide", dest="surface_ide", action="store_true", help="Switch only the Antigravity IDE session (leave Desktop App untouched)")
     p_switch.add_argument("--no-restart", action="store_true", help="Swap session without restarting Antigravity")
 
     # doctor

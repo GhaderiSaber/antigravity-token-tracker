@@ -394,13 +394,19 @@ def restart_antigravity() -> bool:
     return False
 
 
-def switch_to_account(target_email: str, restart: bool = True) -> Tuple[bool, str]:
-    """Switches the active session to target_email across Desktop App and IDE."""
+def switch_to_account(target_email: str, restart: bool = True, surface: str = "both") -> Tuple[bool, str]:
+    """Switches the active session to target_email.
+    surface: 'both' (default), 'desktop' (or 'app'), or 'ide'.
+    """
     target_clean = target_email.strip().lower()
     registered = accounts.load_accounts()
 
     if target_clean not in registered:
         return False, f"Account '{target_clean}' is not in the registered accounts list."
+
+    surface_clean = (surface or "both").strip().lower()
+    do_desktop = surface_clean in ("both", "desktop", "app", "all")
+    do_ide = surface_clean in ("both", "ide", "all")
 
     # 1. Identify currently active sessions
     current_app = auth.discover_antigravity_desktop_app()
@@ -416,15 +422,20 @@ def switch_to_account(target_email: str, restart: bool = True) -> Tuple[bool, st
             if acc.get("is_current_ide_session"):
                 current_ide_email = em
 
-    # If already active across both surfaces, no switch needed
+    # Check if target surface(s) are already aligned
     is_desktop_aligned = (current_desktop_email == target_clean)
     is_ide_aligned = (current_ide_email == target_clean)
-    if is_desktop_aligned and is_ide_aligned:
+
+    if do_desktop and not do_ide and is_desktop_aligned:
+        return True, f"Account '{target_clean}' is already the currently active account in Antigravity Desktop App."
+    if do_ide and not do_desktop and is_ide_aligned:
+        return True, f"Account '{target_clean}' is already the currently active account in Antigravity IDE."
+    if do_desktop and do_ide and is_desktop_aligned and is_ide_aligned:
         return True, f"Account '{target_clean}' is already the currently active account across App and IDE."
 
-    if current_desktop_email:
+    if do_desktop and current_desktop_email:
         snapshot_desktop_session(current_desktop_email)
-    if current_ide_email:
+    if do_ide and current_ide_email:
         snapshot_ide_session(current_ide_email)
 
     # 2. Check available session snapshots for the target account
@@ -437,32 +448,49 @@ def switch_to_account(target_email: str, restart: bool = True) -> Tuple[bool, st
     was_running = is_antigravity_running()
 
     restored_desktop = False
-    if not is_desktop_aligned and (has_desktop_snap or has_keyring_snap or has_refresh_token):
+    if do_desktop and not is_desktop_aligned and (has_desktop_snap or has_keyring_snap or has_refresh_token):
         restored_desktop = restore_desktop_session(target_clean)
 
     restored_ide = False
-    if not is_ide_aligned and has_ide_snap:
+    if do_ide and not is_ide_aligned and has_ide_snap:
         restored_ide = restore_ide_session(target_clean)
 
     # 3. Handle relaunch if requested and previously running
-    if restart and was_running and not is_desktop_aligned:
+    if do_desktop and restart and was_running and not is_desktop_aligned:
         restart_antigravity()
         time.sleep(2.5)  # Brief grace period for app to re-initialize
 
     # 4. Refresh registry status
     accounts.sync_from_antigravity()
 
-    if is_desktop_aligned and restored_ide:
-        return True, f"✓ Synchronized IDE session to match desktop account {target_clean}!"
-    elif has_keyring_snap or has_refresh_token or restored_ide:
-        return True, f"✓ Switched active session to {target_clean}!"
-    elif restored_desktop:
-        return True, (
-            f"✓ Prepared Antigravity session for {target_clean}.\n"
-            f"Please click 'Sign In' in Antigravity to authenticate. Once logged in, its token will be automatically captured for future 1-click switching!"
-        )
+    if not do_desktop and do_ide:
+        if restored_ide:
+            return True, f"✓ Switched Antigravity IDE session to {target_clean}! (Desktop App remains untouched)"
+        else:
+            return False, (
+                f"No saved IDE session snapshot found for {target_clean}.\n"
+                f"Please sign in once in Antigravity IDE so the tracker can capture the session."
+            )
+    elif do_desktop and not do_ide:
+        if has_keyring_snap or has_refresh_token or restored_desktop:
+            return True, f"✓ Switched Antigravity Desktop App session to {target_clean}! (IDE remains untouched)"
+        else:
+            return False, (
+                f"No saved Desktop session snapshot found for {target_clean}.\n"
+                f"Please sign in once in Antigravity Desktop App so the tracker can capture the session."
+            )
     else:
-        return False, (
-            f"No saved session snapshot found for {target_clean}.\n"
-            f"Please sign in once in Antigravity or Antigravity IDE so the tracker can capture the session."
-        )
+        if is_desktop_aligned and restored_ide:
+            return True, f"✓ Synchronized IDE session to match desktop account {target_clean}!"
+        elif has_keyring_snap or has_refresh_token or restored_ide:
+            return True, f"✓ Switched active session to {target_clean}!"
+        elif restored_desktop:
+            return True, (
+                f"✓ Prepared Antigravity session for {target_clean}.\n"
+                f"Please click 'Sign In' in Antigravity to authenticate. Once logged in, its token will be automatically captured for future 1-click switching!"
+            )
+        else:
+            return False, (
+                f"No saved session snapshot found for {target_clean}.\n"
+                f"Please sign in once in Antigravity or Antigravity IDE so the tracker can capture the session."
+            )

@@ -188,12 +188,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/switch":
             query = urllib.parse.parse_qs(parsed.query)
             target_email = query.get("email", [None])[0]
+            surface = query.get("surface", ["both"])[0]
             if not target_email:
                 try:
                     length = int(self.headers.get("Content-Length", 0))
                     if length > 0:
                         body = json.loads(self.rfile.read(length).decode("utf-8"))
                         target_email = body.get("email")
+                        surface = body.get("surface", surface)
                 except Exception:
                     pass
 
@@ -205,7 +207,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
 
             from antigravity_tracker import switcher
-            success, msg = switcher.switch_to_account(target_email, restart=True)
+            success, msg = switcher.switch_to_account(target_email, restart=True, surface=surface)
             self.send_response(200 if success else 400)
             self.send_header("Content-Type", "application/json")
             self.send_header("Cache-Control", "no-cache")
