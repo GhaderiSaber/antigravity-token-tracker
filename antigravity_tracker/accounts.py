@@ -116,6 +116,7 @@ def sync_from_antigravity() -> Tuple[Optional[str], Dict[str, Dict[str, Any]]]:
         accounts[desktop_email] = {
             **existing,
             "email": desktop_email,
+            "name": desktop_session.get("name", existing.get("name", "")),
             "tier": desktop_session.get("tier", existing.get("tier", "Standard")),
             "is_current_desktop_session": True,
             "app_port": desktop_session.get("port"),

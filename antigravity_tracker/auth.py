@@ -235,135 +235,71 @@ def discover_antigravity_desktop_app() -> Optional[Dict[str, Any]]:
     """Detects active Antigravity Desktop App process and extracts port, csrf_token, and user info."""
     fallback_email = ""
     storage_file = os.path.expanduser("~/.config/Antigravity/app_storage.json")
-    if os.path.isfile(storage_file):
-        try:
-            with open(storage_file, "r", encoding="utf-8") as f:
-                app_storage = json.load(f)
-            fallback_email = app_storage.get("jetski.onboarding.lastLoginUsername", "").strip().lower()
-        except Exception:
-            pass
+    if not os.path.isfile(log_file):
+        return None
 
-    ctx = ssl._create_unverified_context()
-
-    # Primary: inspect active processes via /proc and ss -tulpn (robust for v2.16.0+)
     try:
-        pid_ports: Dict[int, list] = {}
-        try:
-            out = subprocess.check_output(["ss", "-tulpn"], stderr=subprocess.DEVNULL).decode()
-            for line in out.splitlines():
-                m_pid = re.search(r'pid=(\d+)', line)
-                m_port = re.search(r'127\.0\.0\.1:(\d+)', line)
-                if m_pid and m_port:
-                    pid_ports.setdefault(int(m_pid.group(1)), []).append(int(m_port.group(1)))
-        except Exception:
-            pass
-
-        for p_cmd in glob.glob('/proc/[0-9]*/cmdline'):
+        fallback_email = ""
+        if os.path.isfile(storage_file):
             try:
-                with open(p_cmd, 'rb') as f:
-                    cmd = f.read().decode('utf-8', errors='ignore').replace('\x00', ' ')
-                # Desktop app language server check (exclude IDE)
-                is_desktop_ls = (
-                    'language_server' in cmd
-                    and (
-                        'subclient_type hub' in cmd
-                        or ('app_data_dir antigravity' in cmd and 'app_data_dir antigravity-ide' not in cmd)
-                        or ('/snap/antigravity/' in cmd and '/snap/antigravity-ide' not in cmd)
-                    )
-                    and not ('antigravity-ide' in cmd or 'subclient_type ide' in cmd)
-                )
-                if is_desktop_ls:
-                    pid = int(p_cmd.split('/')[2])
-                    m_csrf = re.search(r'--csrf_token[=\s]+([^\s]+)', cmd)
-                    csrf = m_csrf.group(1) if m_csrf else ''
-                    ports = pid_ports.get(pid, [])
-                    for port in ports:
-                        try:
-                            url = f"https://127.0.0.1:{port}/exa.language_server_pb.LanguageServerService/GetUserStatus"
-                            headers = {
-                                "Content-Type": "application/json",
-                                "X-Codeium-Csrf-Token": csrf,
-                                "Connect-Protocol-Version": "1"
-                            }
-                            req = urllib.request.Request(url, data=b"{}", headers=headers)
-                            with urllib.request.urlopen(req, context=ctx, timeout=1.0) as resp:
-                                data = json.loads(resp.read().decode("utf-8"))
-                                user_status = data.get("userStatus", {})
-                                live_email = user_status.get("email", "").strip().lower()
-                                live_name = user_status.get("name", "")
-                                tier = user_status.get("userTier", {}).get("name", "Standard")
+                with open(storage_file, "r", encoding="utf-8") as f:
+                    app_storage = json.load(f)
+                fallback_email = app_storage.get("jetski.onboarding.lastLoginUsername", "").strip().lower()
+            except Exception:
+                pass
 
-                                keyring_email, _, _ = get_desktop_keyring_token()
-                                final_email = live_email or keyring_email or fallback_email
-                                if final_email:
-                                    return {
-                                        "email": final_email,
-                                        "name": live_name,
-                                        "port": port,
-                                        "csrf_token": csrf,
-                                        "tier": tier,
-                                        "surface": "Antigravity Desktop App",
-                                        "pid": pid
-                                    }
-                        except Exception:
-                            continue
+        with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.readlines()
+
+        ports = []
+        csrf_token = None
+        for line in reversed(lines):
+            if not csrf_token:
+                m_csrf = re.search(r"--csrf_token\s+([a-f0-9-]+)", line)
+                if m_csrf:
+                    csrf_token = m_csrf.group(1)
+            m_port = re.search(r"127\.0\.0\.1:(\d+)", line)
+            if m_port:
+                p = int(m_port.group(1))
+                if p not in ports:
+                    ports.append(p)
+
+        if not csrf_token or not ports:
+            return None
+
+        ctx = ssl._create_unverified_context()
+        for p in ports:
+            try:
+                url = f"https://127.0.0.1:{p}/exa.language_server_pb.LanguageServerService/GetUserStatus"
+                headers = {
+                    "Content-Type": "application/json",
+                    "X-Codeium-Csrf-Token": csrf_token,
+                    "Connect-Protocol-Version": "1"
+                }
+                req = urllib.request.Request(url, data=b"{}", headers=headers)
+                with urllib.request.urlopen(req, context=ctx, timeout=1.5) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    user_status = data.get("userStatus", {})
+                    live_email = user_status.get("email", "").strip().lower()
+                    live_name = user_status.get("name", "")
+                    tier = user_status.get("userTier", {}).get("name", "Standard")
+
+                    # Fall back to keyring email if live_email not in response
+                    keyring_email, _, _ = get_desktop_keyring_token()
+                    final_email = live_email or keyring_email or fallback_email
+                    if not final_email:
+                        continue
+
+                    return {
+                        "email": final_email,
+                        "name": live_name,
+                        "port": p,
+                        "csrf_token": csrf_token,
+                        "tier": tier,
+                        "surface": "Antigravity Desktop App"
+                    }
             except Exception:
                 continue
-    except Exception:
-        pass
-
-    # Secondary fallback: legacy parsing of main.log (v2.15.1 and earlier)
-    log_file = os.path.expanduser("~/.config/Antigravity/logs/main.log")
-    if os.path.isfile(log_file):
-        try:
-            with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
-                lines = f.readlines()
-
-            ports = []
-            csrf_token = None
-            for line in reversed(lines):
-                if not csrf_token:
-                    m_csrf = re.search(r'--csrf_token[=\s]+([^\s]+)', line)
-                    if m_csrf:
-                        csrf_token = m_csrf.group(1)
-                m_port = re.search(r"127\.0\.0\.1:(\d+)", line)
-                if m_port:
-                    p = int(m_port.group(1))
-                    if p not in ports:
-                        ports.append(p)
-
-            if csrf_token and ports:
-                for p in ports:
-                    try:
-                        url = f"https://127.0.0.1:{p}/exa.language_server_pb.LanguageServerService/GetUserStatus"
-                        headers = {
-                            "Content-Type": "application/json",
-                            "X-Codeium-Csrf-Token": csrf_token,
-                            "Connect-Protocol-Version": "1"
-                        }
-                        req = urllib.request.Request(url, data=b"{}", headers=headers)
-                        with urllib.request.urlopen(req, context=ctx, timeout=1.5) as resp:
-                            data = json.loads(resp.read().decode("utf-8"))
-                            user_status = data.get("userStatus", {})
-                            live_email = user_status.get("email", "").strip().lower()
-                            live_name = user_status.get("name", "")
-                            tier = user_status.get("userTier", {}).get("name", "Standard")
-
-                            keyring_email, _, _ = get_desktop_keyring_token()
-                            final_email = live_email or keyring_email or fallback_email
-                            if final_email:
-                                return {
-                                    "email": final_email,
-                                    "name": live_name,
-                                    "port": p,
-                                    "csrf_token": csrf_token,
-                                    "tier": tier,
-                                    "surface": "Antigravity Desktop App"
-                                }
-                    except Exception:
-                        continue
-        except Exception:
-            pass
 
     return None
 
