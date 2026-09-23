@@ -179,6 +179,21 @@ def snapshot_ide_session(email: str) -> bool:
     if not os.path.isfile(IDE_STATE_DB):
         return False
 
+    clean_email = email.strip().lower()
+
+    # Safety check: verify that state.vscdb tokens actually match this account before snapshotting,
+    # preventing cross-account token pollution.
+    tokens = auth.extract_tokens_from_state_db(IDE_STATE_DB)
+    if tokens:
+        reg = accounts.load_accounts()
+        token_owner = None
+        for em, acc in reg.items():
+            if acc.get("refresh_token") and acc.get("refresh_token") == tokens.get("refresh_token"):
+                token_owner = em.lower()
+                break
+        if token_owner and token_owner != clean_email:
+            return False
+
     try:
         uri = f"file:{IDE_STATE_DB}?mode=ro"
         conn = sqlite3.connect(uri, uri=True, timeout=5)
@@ -195,7 +210,7 @@ def snapshot_ide_session(email: str) -> bool:
         for k, v in rows:
             saved[k] = v
 
-        ide_file = os.path.join(get_account_session_dir(email), "ide_tokens.json")
+        ide_file = os.path.join(get_account_session_dir(clean_email), "ide_tokens.json")
         with open(ide_file, "w", encoding="utf-8") as fp:
             json.dump(saved, fp, indent=2)
         return True
@@ -387,21 +402,30 @@ def switch_to_account(target_email: str, restart: bool = True) -> Tuple[bool, st
     if target_clean not in registered:
         return False, f"Account '{target_clean}' is not in the registered accounts list."
 
-    # 1. Identify currently active account to snapshot it before swapping
+    # 1. Identify currently active sessions
     current_app = auth.discover_antigravity_desktop_app()
-    current_email = current_app.get("email") if current_app else None
-    if not current_email:
-        # Check accounts with active flag
+    current_desktop_email = current_app.get("email").strip().lower() if current_app and current_app.get("email") else None
+
+    current_ide = auth.discover_antigravity_ide()
+    current_ide_email = current_ide.get("email").strip().lower() if current_ide and current_ide.get("email") else None
+
+    if not current_desktop_email and not current_ide_email:
         for em, acc in registered.items():
-            if acc.get("is_current_desktop_session") or acc.get("is_current_ide_session"):
-                current_email = em
-                break
+            if acc.get("is_current_desktop_session"):
+                current_desktop_email = em
+            if acc.get("is_current_ide_session"):
+                current_ide_email = em
 
-    if current_email and current_email.lower() == target_clean:
-        return True, f"Account '{target_clean}' is already the currently active account."
+    # If already active across both surfaces, no switch needed
+    is_desktop_aligned = (current_desktop_email == target_clean)
+    is_ide_aligned = (current_ide_email == target_clean)
+    if is_desktop_aligned and is_ide_aligned:
+        return True, f"Account '{target_clean}' is already the currently active account across App and IDE."
 
-    if current_email:
-        snapshot_account(current_email)
+    if current_desktop_email:
+        snapshot_desktop_session(current_desktop_email)
+    if current_ide_email:
+        snapshot_ide_session(current_ide_email)
 
     # 2. Check available session snapshots for the target account
     target_session_dir = get_account_session_dir(target_clean)
@@ -413,22 +437,24 @@ def switch_to_account(target_email: str, restart: bool = True) -> Tuple[bool, st
     was_running = is_antigravity_running()
 
     restored_desktop = False
-    if has_desktop_snap or has_keyring_snap or has_refresh_token:
+    if not is_desktop_aligned and (has_desktop_snap or has_keyring_snap or has_refresh_token):
         restored_desktop = restore_desktop_session(target_clean)
 
     restored_ide = False
-    if has_ide_snap:
+    if not is_ide_aligned and has_ide_snap:
         restored_ide = restore_ide_session(target_clean)
 
     # 3. Handle relaunch if requested and previously running
-    if restart and was_running:
+    if restart and was_running and not is_desktop_aligned:
         restart_antigravity()
         time.sleep(2.5)  # Brief grace period for app to re-initialize
 
     # 4. Refresh registry status
     accounts.sync_from_antigravity()
 
-    if has_keyring_snap or has_refresh_token or restored_ide:
+    if is_desktop_aligned and restored_ide:
+        return True, f"✓ Synchronized IDE session to match desktop account {target_clean}!"
+    elif has_keyring_snap or has_refresh_token or restored_ide:
         return True, f"✓ Switched active session to {target_clean}!"
     elif restored_desktop:
         return True, (

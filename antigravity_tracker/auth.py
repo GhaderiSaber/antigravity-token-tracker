@@ -6,6 +6,8 @@ import json
 import urllib.request
 import urllib.parse
 import ssl
+import glob
+import subprocess
 from typing import Optional, Dict, Any, Tuple
 
 # Google Antigravity OAuth client credentials extracted from official binary distribution
@@ -302,6 +304,64 @@ def discover_antigravity_desktop_app() -> Optional[Dict[str, Any]]:
         return None
     except Exception:
         return None
+
+
+def discover_antigravity_ide() -> Optional[Dict[str, Any]]:
+    """Detects active Antigravity IDE language server processes and extracts port, csrf_token, and user info."""
+    try:
+        pid_ports: Dict[int, list] = {}
+        try:
+            out = subprocess.check_output(["ss", "-tulpn"], stderr=subprocess.DEVNULL).decode()
+            for line in out.splitlines():
+                m_pid = re.search(r'pid=(\d+)', line)
+                m_port = re.search(r'127\.0\.0\.1:(\d+)', line)
+                if m_pid and m_port:
+                    pid = int(m_pid.group(1))
+                    port = int(m_port.group(1))
+                    pid_ports.setdefault(pid, []).append(port)
+        except Exception:
+            pass
+
+        ctx = ssl._create_unverified_context()
+        for p_cmd in glob.glob('/proc/[0-9]*/cmdline'):
+            try:
+                with open(p_cmd, 'rb') as f:
+                    cmd = f.read().decode('utf-8', errors='ignore').replace('\x00', ' ')
+                if 'language_server' in cmd and ('antigravity-ide' in cmd or 'subclient_type ide' in cmd):
+                    pid = int(p_cmd.split('/')[2])
+                    m_csrf = re.search(r'--csrf_token\s+([a-f0-9-]+)', cmd)
+                    csrf = m_csrf.group(1) if m_csrf else ''
+                    ports = pid_ports.get(pid, [])
+                    for port in ports:
+                        try:
+                            url = f"https://127.0.0.1:{port}/exa.language_server_pb.LanguageServerService/GetUserStatus"
+                            headers = {
+                                "Content-Type": "application/json",
+                                "X-Codeium-Csrf-Token": csrf,
+                                "Connect-Protocol-Version": "1"
+                            }
+                            req = urllib.request.Request(url, data=b"{}", headers=headers)
+                            with urllib.request.urlopen(req, context=ctx, timeout=1.0) as resp:
+                                data = json.loads(resp.read().decode("utf-8"))
+                                user_status = data.get("userStatus", {})
+                                live_email = user_status.get("email", "").strip().lower()
+                                if live_email:
+                                    return {
+                                        "email": live_email,
+                                        "name": user_status.get("name", ""),
+                                        "port": port,
+                                        "csrf_token": csrf,
+                                        "tier": user_status.get("userTier", {}).get("name", "Standard"),
+                                        "surface": "Antigravity IDE",
+                                        "pid": pid
+                                    }
+                        except Exception:
+                            continue
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
 
 
 def fetch_quota_from_desktop_app(port: int, csrf_token: str) -> Optional[Dict[str, Any]]:

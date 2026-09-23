@@ -98,6 +98,21 @@ def sync_from_antigravity() -> Tuple[Optional[str], Dict[str, Dict[str, Any]]]:
         desktop_email = desktop_session["email"].lower()
         active_email = desktop_email
         existing = accounts.get(desktop_email, {})
+
+        # Extract OAuth tokens from Linux Keyring if available
+        access_tok = existing.get("access_token", "")
+        refresh_tok = existing.get("refresh_token", "")
+        try:
+            kr_email, kr_data, _ = auth.get_desktop_keyring_token()
+            if kr_data and isinstance(kr_data, dict) and "token" in kr_data:
+                t = kr_data["token"]
+                if t.get("access_token"):
+                    access_tok = t["access_token"]
+                if t.get("refresh_token"):
+                    refresh_tok = t["refresh_token"]
+        except Exception:
+            pass
+
         accounts[desktop_email] = {
             **existing,
             "email": desktop_email,
@@ -105,8 +120,19 @@ def sync_from_antigravity() -> Tuple[Optional[str], Dict[str, Dict[str, Any]]]:
             "is_current_desktop_session": True,
             "app_port": desktop_session.get("port"),
             "app_csrf_token": desktop_session.get("csrf_token"),
+            "access_token": access_tok,
+            "refresh_token": refresh_tok,
             "last_synced": time.time()
         }
+        if access_tok and not accounts[desktop_email].get("name"):
+            try:
+                uinfo = auth.fetch_user_info(access_tok)
+                if uinfo:
+                    accounts[desktop_email]["name"] = uinfo.get("name", "")
+                    accounts[desktop_email]["picture"] = uinfo.get("picture", "")
+            except Exception:
+                pass
+
         # Automatically snapshot active desktop session for seamless switching
         try:
             from . import switcher
@@ -114,34 +140,52 @@ def sync_from_antigravity() -> Tuple[Optional[str], Dict[str, Dict[str, Any]]]:
         except Exception:
             pass
 
-    # 2. Discover Antigravity IDE (state.vscdb)
-    tokens = auth.extract_tokens_from_state_db()
+    # 2. Discover Antigravity IDE
+    # Primary: query live running Antigravity IDE language server processes
+    ide_session = auth.discover_antigravity_ide()
     ide_email = None
-    if tokens and (tokens.get("access_token") or tokens.get("refresh_token")):
-        acc_temp = {
-            "access_token": tokens.get("access_token"),
-            "refresh_token": tokens.get("refresh_token")
+    tokens = None
+    if ide_session and ide_session.get("email"):
+        ide_email = ide_session["email"].lower()
+        if not active_email:
+            active_email = ide_email
+        existing_ide = accounts.get(ide_email, {})
+        accounts[ide_email] = {
+            **existing_ide,
+            "email": ide_email,
+            "name": ide_session.get("name", existing_ide.get("name", "")),
+            "tier": ide_session.get("tier", existing_ide.get("tier", "Standard")),
+            "is_current_ide_session": True,
+            "last_synced": time.time()
         }
-        valid_token, acc_temp = auth.ensure_valid_token(acc_temp)
-        email = acc_temp.get("email")
-
-        if email:
-            ide_email = email.lower()
-            if not active_email:
-                active_email = ide_email
-            tier = auth.extract_user_tier()
-            existing_ide = accounts.get(ide_email, {})
-            account_entry = {
-                "email": ide_email,
-                "name": acc_temp.get("name", existing_ide.get("name", "")),
-                "picture": acc_temp.get("picture", existing_ide.get("picture", "")),
-                "access_token": valid_token or tokens.get("access_token", ""),
-                "refresh_token": tokens.get("refresh_token") or acc_temp.get("refresh_token", existing_ide.get("refresh_token", "")),
-                "tier": tier if tier != "Standard" else existing_ide.get("tier", tier),
-                "is_current_ide_session": True,
-                "last_synced": time.time()
+    else:
+        # Fallback: inspect state.vscdb only when no live IDE language server is active
+        tokens = auth.extract_tokens_from_state_db()
+        if tokens and (tokens.get("access_token") or tokens.get("refresh_token")):
+            acc_temp = {
+                "access_token": tokens.get("access_token"),
+                "refresh_token": tokens.get("refresh_token")
             }
-            accounts[ide_email] = {**existing_ide, **account_entry}
+            valid_token, acc_temp = auth.ensure_valid_token(acc_temp)
+            email = acc_temp.get("email")
+
+            if email:
+                ide_email = email.lower()
+                if not active_email:
+                    active_email = ide_email
+                tier = auth.extract_user_tier()
+                existing_ide = accounts.get(ide_email, {})
+                account_entry = {
+                    "email": ide_email,
+                    "name": acc_temp.get("name", existing_ide.get("name", "")),
+                    "picture": acc_temp.get("picture", existing_ide.get("picture", "")),
+                    "access_token": valid_token or tokens.get("access_token", ""),
+                    "refresh_token": tokens.get("refresh_token") or acc_temp.get("refresh_token", existing_ide.get("refresh_token", "")),
+                    "tier": tier if tier != "Standard" else existing_ide.get("tier", tier),
+                    "is_current_ide_session": True,
+                    "last_synced": time.time()
+                }
+                accounts[ide_email] = {**existing_ide, **account_entry}
 
     # Update activity flags for all registered accounts
     for k in accounts:
@@ -150,7 +194,7 @@ def sync_from_antigravity() -> Tuple[Optional[str], Dict[str, Dict[str, Any]]]:
         if not ide_email or k != ide_email:
             accounts[k]["is_current_ide_session"] = False
 
-    if desktop_session or tokens:
+    if desktop_session or ide_session or tokens:
         save_accounts(accounts)
 
     return active_email, accounts

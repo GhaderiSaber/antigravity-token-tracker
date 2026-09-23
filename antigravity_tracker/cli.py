@@ -44,6 +44,39 @@ def create_progress_bar(pct: float, width: int = 24) -> str:
     return f"[{color}]{'█' * filled}{'░' * empty}[/{color}] {pct:>5.1f}%"
 
 
+def get_account_display_priority(account_data: dict) -> int:
+    """Returns sort priority integer for an account:
+    0: Active in both Desktop App and IDE
+    1: Active in Desktop App
+    2: Active in IDE
+    3: Inactive / Stored
+    """
+    is_desktop = bool(account_data.get("is_current_desktop_session"))
+    is_ide = bool(account_data.get("is_current_ide_session"))
+    if is_desktop and is_ide:
+        return 0
+    elif is_desktop:
+        return 1
+    elif is_ide:
+        return 2
+    return 3
+
+
+def sort_analyzed_accounts(analyzed: Dict[str, Dict[str, Any]]) -> List[Tuple[str, Dict[str, Any]]]:
+    """Sorts analyzed accounts so active sessions appear first, followed by healthy inactive accounts."""
+    def _sort_key(item):
+        email, a_q = item
+        prio = get_account_display_priority(a_q)
+        remaining = -1.0
+        for g in a_q.get("groups", []):
+            if "gemini" in g.get("displayName", "").lower() and g.get("weekly"):
+                remaining = g["weekly"].get("remainingPercent", 0.0)
+                break
+        return (prio, -remaining, email.lower())
+
+    return sorted(analyzed.items(), key=_sort_key)
+
+
 def render_account_dashboard(analyzed_account: dict, show_models: bool = False, burnrate_info: Optional[dict] = None):
     email = analyzed_account.get("email", "Unknown")
     name = analyzed_account.get("name", "")
@@ -167,7 +200,7 @@ def cmd_status(args):
     pool_burn = burnrate.calculate_pool_burnrates(analyzed)
     active_burn = pool_burn.get("active_metrics")
 
-    for email, a_q in analyzed.items():
+    for email, a_q in sort_analyzed_accounts(analyzed):
         acc_burn = pool_burn.get("accounts", {}).get(email)
         render_account_dashboard(a_q, show_models=args.models, burnrate_info=acc_burn)
 
@@ -280,13 +313,18 @@ def cmd_list(args):
         console.print("[dim]No accounts registered yet.[/dim]")
         return 0
 
+    sorted_accs = sorted(
+        all_accs,
+        key=lambda a: (get_account_display_priority(a), a.get("email", "").lower())
+    )
+
     table = Table(title="Registered Antigravity Accounts", box=None)
     table.add_column("Email", style="bold")
     table.add_column("Name")
     table.add_column("Tier", style="cyan")
     table.add_column("Active Surface", justify="center")
 
-    for acc in all_accs:
+    for acc in sorted_accs:
         surface = "[dim]Inactive / Stored[/dim]"
         if acc.get("is_current_desktop_session") and acc.get("is_current_ide_session"):
             surface = "[bold green]App + IDE[/bold green]"
