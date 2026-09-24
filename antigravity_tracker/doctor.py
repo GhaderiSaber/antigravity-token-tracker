@@ -328,15 +328,21 @@ def check_accounts_health(validate_google_oauth: bool = True) -> List[Dict[str, 
             oauth_detail = "Account captured from cookies only, no refresh_token stored"
 
         # Determine switch readiness
-        if has_keyring or (refresh_token and oauth_status == "VALID"):
+        if (has_keyring and has_ide) or (refresh_token and oauth_status == "VALID" and (has_desktop or has_ide)):
             switch_readiness = "READY"
-            recommendation = "1-Click Switch ready (Keyring token available)"
+            recommendation = "1-Click Switch ready across App and IDE"
+        elif has_keyring or (refresh_token and oauth_status == "VALID"):
+            switch_readiness = "READY"
+            recommendation = "1-Click Switch ready (Desktop App)"
+        elif has_ide:
+            switch_readiness = "READY"
+            recommendation = "1-Click Switch ready (Antigravity IDE)"
         elif has_desktop:
             switch_readiness = "PARTIAL"
             recommendation = "Has desktop session, but needs Keyring snapshot (run `agy-token switch " + email + "` to capture)"
         else:
             switch_readiness = "NEEDS_LOGIN"
-            recommendation = "No session snapshot stored (run `agy-token switch " + email + "` to sign in)"
+            recommendation = "No session snapshot stored (sign in via App or IDE, then run `agy-token sync`)"
 
         report.append({
             "email": email,

@@ -151,24 +151,50 @@ def sync_from_antigravity() -> Tuple[Optional[str], Dict[str, Dict[str, Any]]]:
         if not active_email:
             active_email = ide_email
         existing_ide = accounts.get(ide_email, {})
+
+        # Extract tokens from IDE state db if available
+        tokens = auth.extract_tokens_from_state_db()
+        ide_access_tok = existing_ide.get("access_token", "")
+        ide_refresh_tok = existing_ide.get("refresh_token", "")
+        if tokens:
+            db_email = getattr(auth, "extract_user_email_from_state_db", lambda: None)()
+            if not db_email or db_email == ide_email:
+                if tokens.get("access_token") and not ide_access_tok:
+                    ide_access_tok = tokens["access_token"]
+                if tokens.get("refresh_token"):
+                    ide_refresh_tok = tokens["refresh_token"]
+
         accounts[ide_email] = {
             **existing_ide,
             "email": ide_email,
             "name": ide_session.get("name", existing_ide.get("name", "")),
             "tier": ide_session.get("tier", existing_ide.get("tier", "Standard")),
+            "access_token": ide_access_tok,
+            "refresh_token": ide_refresh_tok,
             "is_current_ide_session": True,
             "last_synced": time.time()
         }
+
+        # Automatically snapshot active IDE session for seamless switching
+        try:
+            from . import switcher
+            switcher.snapshot_ide_session(ide_email)
+        except Exception:
+            pass
     else:
         # Fallback: inspect state.vscdb only when no live IDE language server is active
         tokens = auth.extract_tokens_from_state_db()
+        db_email = getattr(auth, "extract_user_email_from_state_db", lambda: None)()
         if tokens and (tokens.get("access_token") or tokens.get("refresh_token")):
             acc_temp = {
                 "access_token": tokens.get("access_token"),
                 "refresh_token": tokens.get("refresh_token")
             }
-            valid_token, acc_temp = auth.ensure_valid_token(acc_temp)
-            email = acc_temp.get("email")
+            email = db_email
+            valid_token = None
+            if not email:
+                valid_token, acc_temp = auth.ensure_valid_token(acc_temp)
+                email = acc_temp.get("email")
 
             if email:
                 ide_email = email.lower()
@@ -180,13 +206,20 @@ def sync_from_antigravity() -> Tuple[Optional[str], Dict[str, Dict[str, Any]]]:
                     "email": ide_email,
                     "name": acc_temp.get("name", existing_ide.get("name", "")),
                     "picture": acc_temp.get("picture", existing_ide.get("picture", "")),
-                    "access_token": valid_token or tokens.get("access_token", ""),
+                    "access_token": valid_token or tokens.get("access_token") or existing_ide.get("access_token", ""),
                     "refresh_token": tokens.get("refresh_token") or acc_temp.get("refresh_token", existing_ide.get("refresh_token", "")),
                     "tier": tier if tier != "Standard" else existing_ide.get("tier", tier),
                     "is_current_ide_session": True,
                     "last_synced": time.time()
                 }
                 accounts[ide_email] = {**existing_ide, **account_entry}
+
+                # Automatically snapshot active IDE session for seamless switching
+                try:
+                    from . import switcher
+                    switcher.snapshot_ide_session(ide_email)
+                except Exception:
+                    pass
 
     # Update activity flags for all registered accounts
     for k in accounts:

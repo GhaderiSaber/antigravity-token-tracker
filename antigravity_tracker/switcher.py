@@ -163,13 +163,22 @@ def snapshot_desktop_session(email: str) -> bool:
 
     # Record snapshot metadata
     meta_file = os.path.join(get_account_session_dir(clean_email), "snapshot_meta.json")
+    meta = {}
+    if os.path.isfile(meta_file):
+        try:
+            with open(meta_file, "r", encoding="utf-8") as fp:
+                meta = json.load(fp)
+        except Exception:
+            meta = {}
+    meta.update({
+        "email": clean_email,
+        "snapshotted_at": time.time(),
+        "has_desktop_session": copied_any or meta.get("has_desktop_session", False),
+        "has_keyring_token": os.path.isfile(os.path.join(get_account_session_dir(clean_email), "keyring_token.json")),
+        "has_ide_session": meta.get("has_ide_session", False) or os.path.isfile(os.path.join(get_account_session_dir(clean_email), "ide_tokens.json"))
+    })
     with open(meta_file, "w", encoding="utf-8") as fp:
-        json.dump({
-            "email": clean_email,
-            "snapshotted_at": time.time(),
-            "has_desktop_session": copied_any,
-            "has_keyring_token": os.path.isfile(os.path.join(get_account_session_dir(clean_email), "keyring_token.json"))
-        }, fp, indent=2)
+        json.dump(meta, fp, indent=2)
 
     return copied_any
 
@@ -194,12 +203,19 @@ def snapshot_ide_session(email: str) -> bool:
         if token_owner and token_owner != clean_email:
             return False
 
+        # Additional verification against userStatus in state.vscdb
+        extract_fn = getattr(auth, "extract_user_email_from_state_db", None)
+        if extract_fn:
+            db_email = extract_fn(IDE_STATE_DB)
+            if db_email and db_email != clean_email:
+                return False
+
     try:
         uri = f"file:{IDE_STATE_DB}?mode=ro"
         conn = sqlite3.connect(uri, uri=True, timeout=5)
         c = conn.cursor()
-        c.execute("SELECT key, value FROM ItemTable WHERE key IN (?, ?)",
-                  ("antigravityUnifiedStateSync.oauthToken", "antigravityUnifiedStateSync.userStatus"))
+        c.execute("SELECT key, value FROM ItemTable WHERE key IN (?, ?, ?)",
+                  ("antigravityUnifiedStateSync.oauthToken", "antigravityUnifiedStateSync.userStatus", "antigravity.profileUrl"))
         rows = c.fetchall()
         conn.close()
 
@@ -213,6 +229,57 @@ def snapshot_ide_session(email: str) -> bool:
         ide_file = os.path.join(get_account_session_dir(clean_email), "ide_tokens.json")
         with open(ide_file, "w", encoding="utf-8") as fp:
             json.dump(saved, fp, indent=2)
+
+        # 1. Persist access & refresh tokens to accounts.json
+        if tokens:
+            reg = accounts.load_accounts()
+            if clean_email in reg:
+                updated = False
+                if tokens.get("access_token") and not reg[clean_email].get("access_token"):
+                    reg[clean_email]["access_token"] = tokens["access_token"]
+                    updated = True
+                if tokens.get("refresh_token") and reg[clean_email].get("refresh_token") != tokens.get("refresh_token"):
+                    reg[clean_email]["refresh_token"] = tokens["refresh_token"]
+                    updated = True
+                if updated:
+                    accounts.save_accounts(reg)
+
+        # 2. Synthesize keyring token if missing so desktop app can also use it
+        keyring_file = os.path.join(get_account_session_dir(clean_email), "keyring_token.json")
+        if not os.path.isfile(keyring_file) and tokens and tokens.get("refresh_token"):
+            token_obj = {
+                "token": {
+                    "access_token": tokens.get("access_token", ""),
+                    "token_type": "Bearer",
+                    "refresh_token": tokens.get("refresh_token", ""),
+                    "expiry": ""
+                },
+                "auth_method": "OAUTH",
+                "id_token": ""
+            }
+            try:
+                with open(keyring_file, "w", encoding="utf-8") as fp:
+                    json.dump(token_obj, fp, indent=2)
+            except Exception:
+                pass
+
+        # 3. Update snapshot_meta.json
+        meta_file = os.path.join(get_account_session_dir(clean_email), "snapshot_meta.json")
+        meta = {}
+        if os.path.isfile(meta_file):
+            try:
+                with open(meta_file, "r", encoding="utf-8") as fp:
+                    meta = json.load(fp)
+            except Exception:
+                meta = {}
+        meta["email"] = clean_email
+        meta["snapshotted_at"] = time.time()
+        meta["has_ide_session"] = True
+        meta["has_desktop_session"] = meta.get("has_desktop_session", False) or os.path.isdir(os.path.join(get_account_session_dir(clean_email), "desktop"))
+        meta["has_keyring_token"] = os.path.isfile(keyring_file)
+        with open(meta_file, "w", encoding="utf-8") as fp:
+            json.dump(meta, fp, indent=2)
+
         return True
     except Exception as e:
         print(f"[Switcher] Error snapshotting IDE state: {e}")
@@ -312,12 +379,12 @@ def restore_desktop_session(email: str) -> bool:
 
 def restore_ide_session(email: str) -> bool:
     """Restores saved IDE auth keys into ~/.config/Antigravity IDE/User/globalStorage/state.vscdb."""
-    ide_file = os.path.join(get_account_session_dir(email), "ide_tokens.json")
+    clean_email = email.strip().lower()
+    ide_file = os.path.join(get_account_session_dir(clean_email), "ide_tokens.json")
     if not os.path.isfile(ide_file):
         return False
 
-    if not os.path.isfile(IDE_STATE_DB):
-        return False
+    os.makedirs(os.path.dirname(IDE_STATE_DB), mode=0o700, exist_ok=True)
 
     try:
         with open(ide_file, "r", encoding="utf-8") as fp:
@@ -325,6 +392,7 @@ def restore_ide_session(email: str) -> bool:
 
         conn = sqlite3.connect(IDE_STATE_DB, timeout=5)
         c = conn.cursor()
+        c.execute("CREATE TABLE IF NOT EXISTS ItemTable (key TEXT PRIMARY KEY, value TEXT)")
         for k, v in saved.items():
             c.execute("INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)", (k, v))
         conn.commit()
@@ -486,12 +554,21 @@ def switch_to_account(target_email: str, restart: bool = True, surface: str = "b
     current_ide = auth.discover_antigravity_ide()
     current_ide_email = current_ide.get("email").strip().lower() if current_ide and current_ide.get("email") else None
 
-    if not current_desktop_email and not current_ide_email:
+    if not current_desktop_email:
         for em, acc in registered.items():
             if acc.get("is_current_desktop_session"):
                 current_desktop_email = em
-            if acc.get("is_current_ide_session"):
-                current_ide_email = em
+                break
+
+    if not current_ide_email:
+        extract_fn = getattr(auth, "extract_user_email_from_state_db", None)
+        if extract_fn:
+            current_ide_email = extract_fn(IDE_STATE_DB)
+        if not current_ide_email:
+            for em, acc in registered.items():
+                if acc.get("is_current_ide_session"):
+                    current_ide_email = em
+                    break
 
     primary_from_email = current_desktop_email if do_desktop else current_ide_email
 

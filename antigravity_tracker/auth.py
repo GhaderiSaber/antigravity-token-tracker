@@ -79,6 +79,43 @@ def extract_tokens_from_state_db(db_path: str = STATE_DB_PATH) -> Optional[Dict[
     return None
 
 
+def extract_user_email_from_state_db(db_path: str = STATE_DB_PATH) -> Optional[str]:
+    """Extracts the authenticated Google user email from Antigravity IDE state database."""
+    if not os.path.isfile(db_path):
+        return None
+
+    try:
+        uri = f"file:{db_path}?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, timeout=5)
+        c = conn.cursor()
+        c.execute("SELECT value FROM ItemTable WHERE key = ?", ("antigravityUnifiedStateSync.userStatus",))
+        row = c.fetchone()
+        conn.close()
+
+        if not row:
+            return None
+
+        raw = base64.b64decode(row[0])
+        pattern = rb'(?:^|[\x00-\x20":<>,\'\(\)\[\]])([a-zA-Z0-9][a-zA-Z0-9._%+-]*@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'
+        emails = re.findall(pattern, raw)
+        if not emails:
+            for ch in re.findall(rb'[A-Za-z0-9+/=]{20,}', raw):
+                try:
+                    dec = base64.b64decode(ch)
+                    found = re.findall(pattern, dec)
+                    if found:
+                        emails.extend(found)
+                except Exception:
+                    pass
+
+        if emails:
+            return emails[0].decode('utf-8').strip().lower()
+    except Exception:
+        pass
+
+    return None
+
+
 def fetch_user_info(access_token: str) -> Optional[Dict[str, Any]]:
     """Fetches user profile info (email, name, picture) using the Google OAuth access token."""
     if not access_token:

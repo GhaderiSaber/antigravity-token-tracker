@@ -24,6 +24,7 @@ from . import geo
 from . import shield
 from . import balancer
 from . import burnrate
+from . import switcher
 
 console = Console()
 
@@ -301,9 +302,63 @@ def cmd_sync(args):
             if acc.get("is_current_ide_session"):
                 surface.append("Antigravity IDE")
             status_str = f"({', '.join(surface)})" if surface else "(Inactive / Stored)"
-            console.print(f"  • [cyan]{em}[/cyan] [{acc.get('tier', 'Standard')}] {status_str}")
+
+            # Check snapshot coverage
+            snaps = []
+            s_dir = switcher.get_account_session_dir(em)
+            if os.path.isdir(os.path.join(s_dir, "desktop")):
+                snaps.append("App Snapshot ✓")
+            if os.path.isfile(os.path.join(s_dir, "ide_tokens.json")):
+                snaps.append("IDE Snapshot ✓")
+            snap_str = f"  [dim][{', '.join(snaps)}][/dim]" if snaps else ""
+
+            console.print(f"  • [cyan]{em}[/cyan] [{acc.get('tier', 'Standard')}] {status_str}{snap_str}")
     else:
         console.print("[yellow]No active Antigravity session found.[/yellow]")
+    return 0
+
+
+def cmd_snapshot(args):
+    """Explicitly snapshots current active Desktop and/or IDE sessions, or a specified account."""
+    target_email = getattr(args, "email", None)
+    if target_email:
+        clean_email = target_email.strip().lower()
+        res = switcher.snapshot_account(clean_email)
+        saved = [k for k, v in res.items() if v]
+        if saved:
+            console.print(f"[green]✓ Saved session snapshot for {clean_email}: {', '.join(saved)}[/green]")
+            return 0
+        else:
+            console.print(f"[yellow]No active credentials found to snapshot for {clean_email}.[/yellow]")
+            return 1
+
+    accounts.sync_from_antigravity()
+    cur_app = auth.discover_antigravity_desktop_app()
+    cur_ide = auth.discover_antigravity_ide()
+    if not cur_ide:
+        db_email = getattr(auth, "extract_user_email_from_state_db", lambda: None)()
+        if db_email:
+            cur_ide = {"email": db_email}
+
+    snapshotted_any = False
+    if cur_app and cur_app.get("email"):
+        em = cur_app["email"].strip().lower()
+        ok = switcher.snapshot_desktop_session(em)
+        if ok:
+            console.print(f"[green]✓ Saved Antigravity Desktop App session:[/green] [bold]{em}[/bold]")
+            snapshotted_any = True
+
+    if cur_ide and cur_ide.get("email"):
+        em = cur_ide["email"].strip().lower()
+        ok = switcher.snapshot_ide_session(em)
+        if ok:
+            console.print(f"[green]✓ Saved Antigravity IDE session:[/green] [bold]{em}[/bold]")
+            snapshotted_any = True
+
+    if not snapshotted_any:
+        console.print("[yellow]No active Desktop App or IDE sessions detected to snapshot.[/yellow]")
+        return 1
+
     return 0
 
 
@@ -848,7 +903,8 @@ def cmd_doctor(args):
     t_acc = Table(title="3. Registered Accounts & 1-Click Switch Readiness", border_style="cyan", show_lines=True)
     t_acc.add_column("Account Email", style="bold cyan", width=28)
     t_acc.add_column("OAuth Status", width=14, justify="center")
-    t_acc.add_column("Keyring Token", width=14, justify="center")
+    t_acc.add_column("App / Keyring", width=14, justify="center")
+    t_acc.add_column("IDE Session", width=14, justify="center")
     t_acc.add_column("1-Click Switch", width=16, justify="center")
     t_acc.add_column("Action / Recommendation")
 
@@ -864,6 +920,7 @@ def cmd_doctor(args):
             o_badge = f"[yellow]{oauth_st}[/yellow]"
 
         keyring_badge = "[green]✓ Saved[/green]" if acc["has_keyring_snapshot"] else "[yellow]Missing[/yellow]"
+        ide_badge = "[green]✓ Saved[/green]" if acc.get("has_ide_snapshot") else "[dim]Missing[/dim]"
 
         readiness = acc["switch_readiness"]
         if readiness == "READY":
@@ -877,6 +934,7 @@ def cmd_doctor(args):
             acc["email"],
             o_badge,
             keyring_badge,
+            ide_badge,
             r_badge,
             acc["recommendation"]
         )
@@ -1342,6 +1400,10 @@ def main():
     # sync
     subparsers.add_parser("sync", help="Sync active account from Antigravity IDE / app session")
 
+    # snapshot / save
+    p_snap = subparsers.add_parser("snapshot", aliases=["save"], help="Explicitly capture and save session snapshots from active IDE / App")
+    p_snap.add_argument("email", nargs="?", default=None, help="Optional email to snapshot (defaults to all currently active sessions)")
+
     # list
     subparsers.add_parser("list", help="List all registered account profiles")
 
@@ -1416,6 +1478,8 @@ def main():
         "watch": cmd_watch,
         "check": cmd_check,
         "sync": cmd_sync,
+        "snapshot": cmd_snapshot,
+        "save": cmd_snapshot,
         "list": cmd_list,
         "remove": cmd_remove,
         "daemon": cmd_daemon,
