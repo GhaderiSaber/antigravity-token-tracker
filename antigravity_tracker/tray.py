@@ -32,11 +32,39 @@ TRAY_LOCK_FILE = os.path.expanduser("~/.config/antigravity-token-tracker/tray.lo
 
 
 def open_browser(url: str = "http://localhost:8765") -> bool:
-    """Robustly opens the browser in desktop environment using xdg-open/gio with fallback."""
-    for cmd in [["xdg-open", url], ["gio", "open", url]]:
+    """Robustly opens the browser across Linux desktop environments,
+    systemd user services, Wayland, and X11 sessions."""
+    # 1. Primary: XDG Desktop Portal via D-Bus session bus (universal, works from headless systemd service)
+    try:
+        import dbus
+        bus = dbus.SessionBus()
+        portal = bus.get_object('org.freedesktop.portal.Desktop', '/org/freedesktop/portal/desktop')
+        iface = dbus.Interface(portal, 'org.freedesktop.portal.OpenURI')
+        iface.OpenURI('', url, {})
+        return True
+    except Exception:
+        pass
+
+    # 2. Prepare environment with Wayland / Xauthority if missing in systemd user service
+    env = os.environ.copy()
+    uid = os.getuid()
+    runtime_dir = env.get("XDG_RUNTIME_DIR", f"/run/user/{uid}")
+    if "WAYLAND_DISPLAY" not in env and os.path.exists(os.path.join(runtime_dir, "wayland-0")):
+        env["WAYLAND_DISPLAY"] = "wayland-0"
+    if "XDG_CURRENT_DESKTOP" not in env:
+        env["XDG_CURRENT_DESKTOP"] = "ubuntu:GNOME"
+    if "XAUTHORITY" not in env:
+        import glob
+        auth_candidates = glob.glob(f"{runtime_dir}/.mutter-Xwaylandauth*") + glob.glob(f"{runtime_dir}/gdm/Xauthority")
+        if auth_candidates:
+            env["XAUTHORITY"] = auth_candidates[0]
+
+    # 3. Secondary: gio open / xdg-open with prepared environment
+    for cmd in [["gio", "open", url], ["xdg-open", url]]:
         try:
             subprocess.Popen(
                 cmd,
+                env=env,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True
@@ -44,6 +72,8 @@ def open_browser(url: str = "http://localhost:8765") -> bool:
             return True
         except Exception:
             pass
+
+    # 4. Fallback: Python standard webbrowser module
     try:
         return webbrowser.open(url)
     except Exception:

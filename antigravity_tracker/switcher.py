@@ -336,13 +336,20 @@ def restore_ide_session(email: str) -> bool:
 
 
 def get_antigravity_pids() -> list[int]:
-    """Finds PIDs of running Antigravity processes."""
+    """Finds PIDs of running Antigravity processes (including language server, excluding IDE)."""
     pids = []
     try:
-        out = subprocess.check_output(["pgrep", "-f", "/snap/antigravity/.*/antigravity"], stderr=subprocess.DEVNULL)
+        out = subprocess.check_output(["pgrep", "-f", "/snap/antigravity/"], stderr=subprocess.DEVNULL)
         for line in out.splitlines():
             pid = int(line.strip())
             if pid != os.getpid():
+                try:
+                    with open(f"/proc/{pid}/cmdline", "rb") as f:
+                        cmd = f.read().decode("utf-8", errors="ignore")
+                    if "antigravity-ide" in cmd:
+                        continue
+                except Exception:
+                    pass
                 pids.append(pid)
     except Exception:
         pass
@@ -353,8 +360,8 @@ def is_antigravity_running() -> bool:
     return len(get_antigravity_pids()) > 0
 
 
-def restart_antigravity() -> bool:
-    """Terminates running Antigravity instances and relaunches cleanly."""
+def stop_antigravity() -> bool:
+    """Terminates running Antigravity Desktop processes and language server cleanly."""
     pids = get_antigravity_pids()
     if pids:
         # Graceful SIGTERM
@@ -364,8 +371,8 @@ def restart_antigravity() -> bool:
             except OSError:
                 pass
 
-        # Wait up to 3 seconds for exit
-        for _ in range(30):
+        # Wait up to 4 seconds for exit
+        for _ in range(40):
             time.sleep(0.1)
             remaining = [p for p in pids if os.path.exists(f"/proc/{p}")]
             if not remaining:
@@ -379,19 +386,51 @@ def restart_antigravity() -> bool:
                     pass
             time.sleep(0.5)
 
-    # Relaunch in background
+    # Clean up single-instance locks so fresh instance starts immediately without crash dialogs
+    for lock_name in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
+        lock_path = os.path.join(DESKTOP_CONFIG_DIR, lock_name)
+        try:
+            if os.path.islink(lock_path) or os.path.isfile(lock_path):
+                os.unlink(lock_path)
+        except Exception:
+            pass
+
+    return True
+
+
+def launch_antigravity() -> bool:
+    """Relaunches Antigravity Desktop App with proper desktop environment."""
     antigravity_bin = shutil.which("antigravity") or "/snap/bin/antigravity"
-    if os.path.isfile(antigravity_bin):
-        env = os.environ.copy()
-        subprocess.Popen(
-            [antigravity_bin],
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True
-        )
-        return True
-    return False
+    if not os.path.isfile(antigravity_bin):
+        return False
+
+    env = os.environ.copy()
+    uid = os.getuid()
+    runtime_dir = env.get("XDG_RUNTIME_DIR", f"/run/user/{uid}")
+    if "WAYLAND_DISPLAY" not in env and os.path.exists(os.path.join(runtime_dir, "wayland-0")):
+        env["WAYLAND_DISPLAY"] = "wayland-0"
+    if "XDG_CURRENT_DESKTOP" not in env:
+        env["XDG_CURRENT_DESKTOP"] = "ubuntu:GNOME"
+    if "XAUTHORITY" not in env:
+        import glob
+        auth_candidates = glob.glob(f"{runtime_dir}/.mutter-Xwaylandauth*") + glob.glob(f"{runtime_dir}/gdm/Xauthority")
+        if auth_candidates:
+            env["XAUTHORITY"] = auth_candidates[0]
+
+    subprocess.Popen(
+        [antigravity_bin],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True
+    )
+    return True
+
+
+def restart_antigravity() -> bool:
+    """Terminates running Antigravity instances and relaunches cleanly."""
+    stop_antigravity()
+    return launch_antigravity()
 
 
 def _record_switch_state(from_email: Optional[str], target_email: str, surface: str):
@@ -481,6 +520,10 @@ def switch_to_account(target_email: str, restart: bool = True, surface: str = "b
 
     was_running = is_antigravity_running()
 
+    # Terminate running desktop app BEFORE restoring files so Chromium does not lock or overwrite them on exit
+    if do_desktop and restart and was_running and not is_desktop_aligned:
+        stop_antigravity()
+
     restored_desktop = False
     if do_desktop and not is_desktop_aligned and (has_desktop_snap or has_keyring_snap or has_refresh_token):
         restored_desktop = restore_desktop_session(target_clean)
@@ -491,8 +534,13 @@ def switch_to_account(target_email: str, restart: bool = True, surface: str = "b
 
     # 3. Handle relaunch if requested and previously running
     if do_desktop and restart and was_running and not is_desktop_aligned:
-        restart_antigravity()
-        time.sleep(2.5)  # Brief grace period for app to re-initialize
+        launch_antigravity()
+        # Poll up to 8s for the new language server to become active with target account
+        for _ in range(16):
+            time.sleep(0.5)
+            cur = auth.discover_antigravity_desktop_app()
+            if cur and cur.get("email") == target_clean:
+                break
 
     # 4. Refresh registry status
     accounts.sync_from_antigravity()

@@ -511,11 +511,11 @@ def choose_account_interactive(accounts_data: list, default_email: Optional[str]
                 elif ch in ('q', 'Q'):
                     return None
                 elif ch == '\x1b':
-                    r, _, _ = select.select([sys.stdin], [], [], 0.05)
+                    r, _, _ = select.select([sys.stdin], [], [], 0.2)
                     if r:
                         ch2 = sys.stdin.read(1)
                         if ch2 == '[':
-                            r, _, _ = select.select([sys.stdin], [], [], 0.05)
+                            r, _, _ = select.select([sys.stdin], [], [], 0.2)
                             if r:
                                 ch3 = sys.stdin.read(1)
                                 if ch3 == 'A':  # UP
@@ -766,9 +766,28 @@ def cmd_switch(args):
 
 
 def cmd_web(args):
-    from web_server import start_server
-    start_server(port=args.port)
-    return 0
+    port = getattr(args, "port", 8765)
+    import socket
+    from .tray import open_browser
+
+    # Check if dashboard server is already listening
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        is_running = (s.connect_ex(("127.0.0.1", port)) == 0)
+
+    url = f"http://localhost:{port}/"
+    if is_running:
+        console.print(f"[bold green]✓ Web Dashboard is active at {url}[/bold green]")
+        console.print("[dim]Opening in your default browser...[/dim]")
+        open_browser(url)
+        return 0
+    else:
+        console.print(f"[bold cyan]Starting Web Dashboard at {url}...[/bold cyan]")
+        import web_server
+        web_server.start_background_server(port=port)
+        open_browser(url)
+        from web_server import start_server
+        start_server(port=port)
+        return 0
 
 
 def cmd_tray(args):
