@@ -3,14 +3,23 @@ from unittest.mock import patch, MagicMock
 import os
 import signal
 
+import tempfile
+import shutil
 from antigravity_tracker import shield
 
 
 class TestShield(unittest.TestCase):
     def setUp(self):
+        self.temp_dir = tempfile.mkdtemp(prefix="agy_shield_test_")
+        self.orig_config_file = shield.SHIELD_CONFIG_FILE
+        shield.SHIELD_CONFIG_FILE = os.path.join(self.temp_dir, "shield.json")
         # Reset timestamps
         shield._LAST_TRIGGER_TIMESTAMP = 0.0
         shield._WAS_VIOLATING = False
+
+    def tearDown(self):
+        shield.SHIELD_CONFIG_FILE = self.orig_config_file
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_shield_config_defaults_and_toggle(self):
         cfg = shield.load_shield_config()

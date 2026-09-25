@@ -92,6 +92,17 @@ if [ -f "$HOME/.config/autostart/antigravity-token-tracker-tray.desktop" ]; then
     echo "✓ Cleaned up redundant autostart entry ~/.config/autostart/antigravity-token-tracker-tray.desktop (systemd daemon handles tray)"
 fi
 
+# 5c. Desktop Application Menu Entry
+DESKTOP_APPS_DIR="$HOME/.local/share/applications"
+mkdir -p "$DESKTOP_APPS_DIR"
+cp "$SCRIPT_DIR/antigravity-token-tracker-tray.desktop" "$DESKTOP_APPS_DIR/antigravity-token-tracker-tray.desktop"
+echo "✓ Installed desktop application entry: $DESKTOP_APPS_DIR/antigravity-token-tracker-tray.desktop"
+
+# Reload systemd daemon if available
+if command -v systemctl &>/dev/null; then
+    systemctl --user daemon-reload 2>/dev/null || true
+fi
+
 # 6. Initial Account Discovery
 echo ""
 echo "🔍 Discovering active Antigravity sessions..."

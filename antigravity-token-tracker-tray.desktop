@@ -2,7 +2,7 @@
 Type=Application
 Name=Antigravity Token Tracker Tray
 Comment=Native Linux Top-Bar Indicator and 1-Click Switcher for Google Antigravity
-Exec=/home/ghaderi-saber/.local/bin/agy-token tray
+Exec=sh -c "$HOME/.local/bin/agy-token tray"
 Icon=utilities-terminal
 Terminal=false
 Categories=Utility;Development;

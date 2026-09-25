@@ -45,9 +45,10 @@ class TestWebServer(unittest.TestCase):
                 self.assertEqual(resp.status, 200)
                 self.assertIn("text/css", resp.headers.get("Content-Type", ""))
 
+    @patch("antigravity_tracker.accounts.sync_from_antigravity", return_value=(None, {}))
     @patch("antigravity_tracker.geo.get_ip_geo")
     @patch("antigravity_tracker.quota.fetch_all_accounts_quota")
-    def test_api_quota_endpoint(self, mock_fetch, mock_geo):
+    def test_api_quota_endpoint(self, mock_fetch, mock_geo, mock_sync):
         mock_geo.return_value = {
             "ip": "127.0.0.1",
             "country_code": "US",
@@ -98,9 +99,10 @@ class TestWebServer(unittest.TestCase):
             self.assertIn("server_time_utc", data)
             self.assertIn("server_time_local", data)
 
+    @patch("antigravity_tracker.accounts.sync_from_antigravity", return_value=(None, {}))
     @patch("antigravity_tracker.geo.get_ip_geo")
     @patch("antigravity_tracker.quota.fetch_all_accounts_quota")
-    def test_api_quota_force_refresh(self, mock_fetch, mock_geo):
+    def test_api_quota_force_refresh(self, mock_fetch, mock_geo, mock_sync):
         mock_geo.return_value = {
             "ip": "127.0.0.1",
             "country_code": "US",

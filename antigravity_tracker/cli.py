@@ -336,7 +336,7 @@ def cmd_snapshot(args):
     cur_app = auth.discover_antigravity_desktop_app()
     cur_ide = auth.discover_antigravity_ide()
     if not cur_ide:
-        db_email = getattr(auth, "extract_user_email_from_state_db", lambda: None)()
+        db_email = getattr(auth, "extract_user_email_from_state_db", lambda *a, **k: None)()
         if db_email:
             cur_ide = {"email": db_email}
 

@@ -37,9 +37,11 @@ def save_failover_state(state: Dict[str, Any]):
         print(f"[Failover] Failed to save state: {e}")
 
 
-def get_account_primary_quota(account_data: Dict[str, Any]) -> Tuple[float, bool]:
+def get_account_primary_quota(account_data: Optional[Dict[str, Any]]) -> Tuple[float, bool]:
     """Extracts primary quota remaining percent (Gemini weekly if available, or first weekly bucket).
     Returns (remaining_percent, is_exhausted)."""
+    if not account_data:
+        return 0.0, True
     groups = account_data.get("groups", [])
     if not groups:
         return 0.0, True

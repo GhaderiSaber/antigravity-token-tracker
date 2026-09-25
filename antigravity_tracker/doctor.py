@@ -44,11 +44,15 @@ def check_system_environment() -> List[Dict[str, Any]]:
 
     # 2. Linux Secret Service (GNOME Keyring)
     try:
-        secret = switcher.get_keyring_secret()
+        import dbus
+        bus = dbus.SessionBus()
+        service = bus.get_object('org.freedesktop.secrets', '/org/freedesktop/secrets')
+        svc_iface = dbus.Interface(service, 'org.freedesktop.Secret.Service')
+        session_path = svc_iface.OpenSession('plain', '')[1]
         results.append({
             "component": "Linux Secret Service",
             "status": "PASS",
-            "details": "org.freedesktop.secrets accessible via D-Bus; keyring secret readable"
+            "details": "org.freedesktop.secrets accessible via D-Bus; keyring service ready"
         })
     except Exception as e:
         results.append({
@@ -204,7 +208,7 @@ def check_system_environment() -> List[Dict[str, Any]]:
         is_bal_on = bal_cfg.get("enabled", False)
         strat = bal_cfg.get("strategy", "watermark")
         registered = accounts.load_accounts()
-        ready_cnt = sum(1 for em in registered if switcher.get_account_session_dir(em))
+        ready_cnt = sum(1 for em in registered if switcher.has_account_credentials(em, registered))
 
         if is_bal_on:
             results.append({
@@ -261,23 +265,32 @@ def check_antigravity_runtime() -> List[Dict[str, Any]]:
         })
 
         # 3. Keyring synchronisation check
-        keyring_secret = switcher.get_keyring_secret()
-        keyring_email = None
-        if keyring_secret:
-            try:
-                kd = json.loads(keyring_secret)
-                token_data = kd.get("token", {})
-                acc_token = token_data.get("access_token", "")
-                # Compare against active account
-                keyring_email = active_email
-            except Exception:
-                pass
-
-        results.append({
-            "component": "Keyring & App Sync",
-            "status": "PASS",
-            "details": f"Linux Keyring credentials aligned with active session: {active_email}"
-        })
+        k_email, k_data, k_raw = switcher.get_keyring_secret()
+        if k_data:
+            if k_email and k_email.lower() == active_email.lower():
+                results.append({
+                    "component": "Keyring & App Sync",
+                    "status": "PASS",
+                    "details": f"Linux Keyring credentials aligned with active session: {active_email}"
+                })
+            elif k_email:
+                results.append({
+                    "component": "Keyring & App Sync",
+                    "status": "WARN",
+                    "details": f"Keyring credentials ({k_email}) do not match active desktop app session ({active_email})"
+                })
+            else:
+                results.append({
+                    "component": "Keyring & App Sync",
+                    "status": "PASS",
+                    "details": f"Linux Keyring credentials present for active session: {active_email}"
+                })
+        else:
+            results.append({
+                "component": "Keyring & App Sync",
+                "status": "WARN",
+                "details": f"No Keyring credentials found for active session: {active_email}"
+            })
     else:
         results.append({
             "component": "Live Desktop App",

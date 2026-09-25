@@ -12,6 +12,9 @@ fi
 # Remove service file
 rm -f "$HOME/.config/systemd/user/antigravity-token-tracker.service"
 
+# Remove desktop entry
+rm -f "$HOME/.local/share/applications/antigravity-token-tracker-tray.desktop"
+
 # Remove CLI symlink
 rm -f "$HOME/.local/bin/agy-token"
 

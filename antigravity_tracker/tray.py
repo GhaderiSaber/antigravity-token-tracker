@@ -350,7 +350,7 @@ class TrayApplet:
         """Returns brief summary for tooltip."""
         geo_str = geo.format_ip_summary(self.geo_info) if self.geo_info else ""
         geo_part = f" | {geo_str}" if geo_str else ""
-        if self.geo_info.get("is_restricted"):
+        if self.geo_info and self.geo_info.get("is_restricted"):
             geo_part = f" | ⚠️ RESTRICTED REGION ({self.geo_info.get('country_code', '')})"
 
         active_sessions = failover.get_active_sessions(self.analyzed_quotas)

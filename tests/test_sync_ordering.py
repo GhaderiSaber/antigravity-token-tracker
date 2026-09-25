@@ -43,12 +43,14 @@ class TestSyncAndOrdering(unittest.TestCase):
         self.assertEqual(sorted_accs[1][0], "other@example.com")
         self.assertEqual(sorted_accs[2][0], "duzen@example.com")
 
+    @patch("antigravity_tracker.switcher.snapshot_desktop_session")
+    @patch("antigravity_tracker.switcher.snapshot_ide_session")
     @patch("antigravity_tracker.auth.discover_antigravity_ide")
     @patch("antigravity_tracker.auth.discover_antigravity_desktop_app")
     @patch("antigravity_tracker.auth.get_desktop_keyring_token")
     @patch("antigravity_tracker.accounts.load_accounts")
     @patch("antigravity_tracker.accounts.save_accounts")
-    def test_sync_from_antigravity_precedence(self, mock_save, mock_load, mock_kr, mock_desk, mock_ide):
+    def test_sync_from_antigravity_precedence(self, mock_save, mock_load, mock_kr, mock_desk, mock_ide, mock_snap_ide, mock_snap_desk):
         mock_load.return_value = {
             "duzen@example.com": {"email": "duzen@example.com", "tier": "Standard"},
             "saber@example.com": {"email": "saber@example.com", "tier": "Google AI Pro"}
@@ -104,6 +106,7 @@ class TestSyncAndOrdering(unittest.TestCase):
             result = switcher.snapshot_ide_session("saber@example.com")
             self.assertFalse(result)
 
+    @patch("antigravity_tracker.switcher._record_switch_state")
     @patch("antigravity_tracker.switcher.restore_desktop_session")
     @patch("antigravity_tracker.switcher.restore_ide_session")
     @patch("antigravity_tracker.switcher.snapshot_desktop_session")
@@ -114,7 +117,7 @@ class TestSyncAndOrdering(unittest.TestCase):
     @patch("antigravity_tracker.auth.discover_antigravity_desktop_app")
     @patch("antigravity_tracker.auth.discover_antigravity_ide")
     def test_switch_surface_targeting(self, mock_ide, mock_desk, mock_accs, mock_sync, mock_run,
-                                       mock_snap_ide, mock_snap_desk, mock_rest_ide, mock_rest_desk):
+                                       mock_snap_ide, mock_snap_desk, mock_rest_ide, mock_rest_desk, mock_record):
         mock_accs.return_value = {
             "saber@example.com": {"email": "saber@example.com", "refresh_token": "tok1"},
             "duzen@example.com": {"email": "duzen@example.com", "refresh_token": "tok2"}
@@ -132,9 +135,11 @@ class TestSyncAndOrdering(unittest.TestCase):
             self.assertIn("IDE remains untouched", msg)
             mock_rest_desk.assert_called_with("duzen@example.com")
             mock_rest_ide.assert_not_called()
+            mock_record.assert_called_with("saber@example.com", "duzen@example.com", "desktop")
 
         mock_rest_desk.reset_mock()
         mock_rest_ide.reset_mock()
+        mock_record.reset_mock()
 
         # Test ide-only switch to duzen
         with patch("os.path.isdir", return_value=True), patch("os.path.isfile", return_value=True):
@@ -144,6 +149,7 @@ class TestSyncAndOrdering(unittest.TestCase):
             self.assertIn("Desktop App remains untouched", msg)
             mock_rest_ide.assert_called_with("duzen@example.com")
             mock_rest_desk.assert_not_called()
+            mock_record.assert_called_with("saber@example.com", "duzen@example.com", "ide")
 
 
 if __name__ == "__main__":

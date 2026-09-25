@@ -64,6 +64,8 @@ def get_status_badge(remaining_fraction: float) -> Tuple[str, str]:
 
 def analyze_account_lifecycle(account_quota: Dict[str, Any]) -> Dict[str, Any]:
     """Enhances raw account quota data with countdowns, status badges, and flags."""
+    if not account_quota:
+        return {}
     analyzed_groups = []
     is_gemini_exhausted = False
     is_3p_exhausted = False

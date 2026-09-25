@@ -157,7 +157,7 @@ def sync_from_antigravity() -> Tuple[Optional[str], Dict[str, Dict[str, Any]]]:
         ide_access_tok = existing_ide.get("access_token", "")
         ide_refresh_tok = existing_ide.get("refresh_token", "")
         if tokens:
-            db_email = getattr(auth, "extract_user_email_from_state_db", lambda: None)()
+            db_email = getattr(auth, "extract_user_email_from_state_db", lambda *a, **k: None)()
             if not db_email or db_email == ide_email:
                 if tokens.get("access_token") and not ide_access_tok:
                     ide_access_tok = tokens["access_token"]
@@ -184,7 +184,7 @@ def sync_from_antigravity() -> Tuple[Optional[str], Dict[str, Dict[str, Any]]]:
     else:
         # Fallback: inspect state.vscdb only when no live IDE language server is active
         tokens = auth.extract_tokens_from_state_db()
-        db_email = getattr(auth, "extract_user_email_from_state_db", lambda: None)()
+        db_email = getattr(auth, "extract_user_email_from_state_db", lambda *a, **k: None)()
         if tokens and (tokens.get("access_token") or tokens.get("refresh_token")):
             acc_temp = {
                 "access_token": tokens.get("access_token"),

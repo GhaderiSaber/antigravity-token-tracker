@@ -1,10 +1,21 @@
 import unittest
 import os
+import tempfile
+import shutil
 from unittest.mock import patch, MagicMock
 from antigravity_tracker import tray
 
 
 class TestTrayApplet(unittest.TestCase):
+
+    def setUp(self):
+        self.temp_icon_dir = tempfile.mkdtemp(prefix="agy_icon_test_")
+        self.orig_icon_dir = tray.ICON_CACHE_DIR
+        tray.ICON_CACHE_DIR = self.temp_icon_dir
+
+    def tearDown(self):
+        tray.ICON_CACHE_DIR = self.orig_icon_dir
+        shutil.rmtree(self.temp_icon_dir, ignore_errors=True)
 
     def test_generate_tray_icon(self):
         icon_name = tray.generate_tray_icon(85.0)

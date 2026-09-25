@@ -35,12 +35,28 @@ def ensure_sessions_dir():
     os.makedirs(SESSIONS_DIR, mode=0o700, exist_ok=True)
 
 
-def get_account_session_dir(email: str) -> str:
-    ensure_sessions_dir()
+def get_account_session_dir(email: str, create: bool = False) -> str:
     clean_email = email.strip().lower()
     path = os.path.join(SESSIONS_DIR, clean_email)
-    os.makedirs(path, mode=0o700, exist_ok=True)
+    if create:
+        ensure_sessions_dir()
+        os.makedirs(path, mode=0o700, exist_ok=True)
     return path
+
+
+def has_account_credentials(email: str, registered: Optional[Dict[str, Any]] = None) -> bool:
+    """Checks whether an account has saved session snapshots or a valid refresh token."""
+    clean_email = email.strip().lower()
+    s_dir = get_account_session_dir(clean_email, create=False)
+    if os.path.isdir(s_dir):
+        has_desktop = os.path.isdir(os.path.join(s_dir, "desktop"))
+        has_keyring = os.path.isfile(os.path.join(s_dir, "keyring_token.json"))
+        has_ide = os.path.isfile(os.path.join(s_dir, "ide_tokens.json"))
+        if has_desktop or has_keyring or has_ide:
+            return True
+    if registered is None:
+        registered = accounts.load_accounts()
+    return bool(registered.get(clean_email, {}).get("refresh_token"))
 
 
 def get_keyring_secret() -> Tuple[Optional[str], Optional[Dict[str, Any]], Optional[str]]:
@@ -112,7 +128,7 @@ def snapshot_desktop_session(email: str) -> bool:
         return False
 
     clean_email = email.strip().lower()
-    target_dir = os.path.join(get_account_session_dir(clean_email), "desktop")
+    target_dir = os.path.join(get_account_session_dir(clean_email, create=True), "desktop")
     os.makedirs(target_dir, mode=0o700, exist_ok=True)
 
     copied_any = False
@@ -226,7 +242,7 @@ def snapshot_ide_session(email: str) -> bool:
         for k, v in rows:
             saved[k] = v
 
-        ide_file = os.path.join(get_account_session_dir(clean_email), "ide_tokens.json")
+        ide_file = os.path.join(get_account_session_dir(clean_email, create=True), "ide_tokens.json")
         with open(ide_file, "w", encoding="utf-8") as fp:
             json.dump(saved, fp, indent=2)
 
@@ -304,7 +320,10 @@ def restore_desktop_session(email: str) -> bool:
     has_files = os.path.isdir(source_dir)
     has_keyring = os.path.isfile(keyring_file)
 
-    if not has_files and not has_keyring:
+    reg = accounts.load_accounts()
+    has_refresh_token = bool(reg.get(clean_email, {}).get("refresh_token"))
+
+    if not has_files and not has_keyring and not has_refresh_token:
         return False
 
     if has_files:
