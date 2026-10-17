@@ -23,9 +23,14 @@ try:
     from . import shield
     from . import balancer
     from . import burnrate
+    from . import server as web_server
 except (ImportError, ValueError):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from antigravity_tracker import accounts, quota, lifecycle, switcher, failover, notifier, geo, shield, balancer, burnrate
+    try:
+        from antigravity_tracker import server as web_server
+    except ImportError:
+        import web_server
 
 ICON_CACHE_DIR = os.path.expanduser("~/.config/antigravity-token-tracker/icons")
 TRAY_LOCK_FILE = os.path.expanduser("~/.config/antigravity-token-tracker/tray.lock")

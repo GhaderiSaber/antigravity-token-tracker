@@ -14,7 +14,8 @@ export default function Header({
   onIntervalChange,
   now,
   theme,
-  onToggleTheme
+  onToggleTheme,
+  sseConnected = false
 }) {
   const geo = data?.geo;
   const shield = data?.shield;
@@ -153,6 +154,13 @@ export default function Header({
         </div>
 
         <div className="flex items-center gap-3">
+          <span
+            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-mono border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900"
+            title={sseConnected ? "Real-time push stream connected (/api/events)" : "SSE disconnected - using polling"}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${sseConnected ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
+            <span>{sseConnected ? 'Live SSE' : 'Polling'}</span>
+          </span>
           <span>{syncedText}</span>
           <label className="flex items-center gap-1.5">
             <span>Auto-Sync:</span>

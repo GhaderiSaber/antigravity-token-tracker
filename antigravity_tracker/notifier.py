@@ -414,3 +414,108 @@ def check_and_notify_lifecycle_events(analyzed_quotas: Dict[str, Dict[str, Any]]
             }
 
     save_notification_state(state)
+
+
+def check_and_notify_burnrate_warnings(
+    analyzed_quotas: Dict[str, Dict[str, Any]],
+    warning_threshold_minutes: float = 30.0,
+    cooldown_seconds: float = 1800.0
+) -> List[Dict[str, Any]]:
+    """Calculates live burn velocity on active sessions and sends proactive desktop alerts
+    when estimated time to exhaustion (ETA) is under warning_threshold_minutes."""
+    state = load_notification_state()
+    burn_alerts = state.get("burn_rate_alerts", {})
+
+    try:
+        from . import failover, burnrate
+    except (ImportError, ValueError):
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from antigravity_tracker import failover, burnrate
+
+    active_sessions = failover.get_active_sessions(analyzed_quotas)
+    if not active_sessions:
+        return []
+
+    now_ts = time.time()
+    snapshots = burnrate.load_snapshots(max_age_seconds=7200.0)
+    alerts_fired = []
+
+    for surface_key, (email, q_data) in active_sessions.items():
+        if not email or not q_data:
+            continue
+        email_clean = email.strip().lower()
+
+        # Suppress if switched away from recently
+        switched_from = state.get("switched_from", {})
+        if email_clean in switched_from and (now_ts - switched_from[email_clean]) < 300:
+            continue
+
+        # Check cooldown
+        last_alert = float(burn_alerts.get(email_clean, 0.0))
+        if now_ts - last_alert < cooldown_seconds:
+            continue
+
+        # Extract current weekly percentage for Gemini or primary group
+        rem_pct, is_exh = failover.get_account_primary_quota(q_data)
+        if is_exh or rem_pct <= 1.0 or rem_pct >= 90.0:
+            continue
+
+        velocity_info = burnrate.calculate_account_velocity(
+            snapshots,
+            email_clean,
+            window_seconds=7200.0,
+            current_quota_pct=rem_pct,
+            now=now_ts
+        )
+
+        is_depleting = velocity_info.get("is_depleting", False)
+        eta_seconds = velocity_info.get("eta_seconds")
+
+        if is_depleting and eta_seconds is not None and eta_seconds <= (warning_threshold_minutes * 60.0):
+            surface_name = "Desktop App" if surface_key == "desktop" else "Antigravity IDE"
+            vel = velocity_info.get("velocity_pct_per_hour", 0.0)
+            eta_str = velocity_info.get("eta_human", f"~{int(eta_seconds // 60)}m")
+
+            title = f"⏳ Fast Quota Burn ({surface_name}): {email}"
+            msg = f"Consuming tokens at {vel:.1f}%/hr.\nEstimated {eta_str} remaining before exhaustion ({rem_pct:.1f}% left)."
+
+            # Identify best backup candidate
+            active_emails = [pair[0].lower() for pair in active_sessions.values() if pair and pair[0]]
+            candidate = failover.find_best_failover_candidate(
+                analyzed_quotas,
+                current_email=email,
+                exclude_emails=active_emails,
+                min_threshold_pct=5.0
+            )
+
+            actions = []
+            if candidate:
+                best_email, best_pct = candidate
+                actions.append((
+                    f"switch:{best_email}",
+                    f"⚡ Switch to {best_email} ({best_pct:.1f}%)",
+                    lambda e=best_email: trigger_action_switch(e)
+                ))
+            actions.append((
+                "dashboard",
+                "🌐 Open Dashboard",
+                trigger_action_dashboard
+            ))
+
+            send_desktop_notification(title, msg, urgency="normal", actions=actions)
+            burn_alerts[email_clean] = now_ts
+            alerts_fired.append({
+                "email": email_clean,
+                "surface": surface_key,
+                "velocity_pct_per_hour": vel,
+                "eta_seconds": eta_seconds,
+                "quota_pct": rem_pct
+            })
+
+    if alerts_fired:
+        state["burn_rate_alerts"] = burn_alerts
+        save_notification_state(state)
+
+    return alerts_fired
+

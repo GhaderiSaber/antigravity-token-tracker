@@ -239,6 +239,56 @@ class TestNotifier(unittest.TestCase):
         self.assertIn("first_run@example.com", state)
         self.assertEqual(state["first_run@example.com"]["Gemini Models-weekly"]["status"], "EXHAUSTED")
 
+    @patch("antigravity_tracker.burnrate.load_snapshots")
+    @patch("antigravity_tracker.notifier.send_desktop_notification")
+    def test_check_and_notify_burnrate_warnings_triggered(self, mock_notify, mock_snapshots):
+        now = time.time()
+        # Mock snapshots indicating rapid consumption: 50% down to 20% over 25 minutes
+        mock_snapshots.return_value = [
+            {
+                "timestamp": now - 1800,
+                "accounts": {
+                    "fast_burn@example.com": {
+                        "groups": {"Gemini Models": {"weekly_pct": 50.0}}
+                    }
+                }
+            },
+            {
+                "timestamp": now - 300,
+                "accounts": {
+                    "fast_burn@example.com": {
+                        "groups": {"Gemini Models": {"weekly_pct": 20.0}}
+                    }
+                }
+            }
+        ]
+
+        analyzed_quotas = {
+            "fast_burn@example.com": {
+                "email": "fast_burn@example.com",
+                "is_current_desktop_session": True,
+                "groups": [
+                    {
+                        "displayName": "Gemini Models",
+                        "weekly": {"remainingPercent": 10.0}  # ~20 min left at 30%/hr
+                    }
+                ]
+            }
+        }
+
+        alerts = notifier.check_and_notify_burnrate_warnings(analyzed_quotas, warning_threshold_minutes=30.0)
+        self.assertEqual(len(alerts), 1)
+        self.assertEqual(alerts[0]["email"], "fast_burn@example.com")
+        self.assertTrue(mock_notify.called)
+        call_args = mock_notify.call_args[0]
+        self.assertIn("Fast Quota Burn", call_args[0])
+
+        # Second run should be suppressed by cooldown
+        mock_notify.reset_mock()
+        alerts_second = notifier.check_and_notify_burnrate_warnings(analyzed_quotas, warning_threshold_minutes=30.0)
+        self.assertEqual(len(alerts_second), 0)
+        self.assertFalse(mock_notify.called)
+
 
 if __name__ == "__main__":
     unittest.main()

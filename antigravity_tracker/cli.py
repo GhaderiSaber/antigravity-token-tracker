@@ -661,7 +661,10 @@ def cmd_daemon(args):
 
     # Start background web dashboard
     try:
-        import web_server
+        try:
+            from . import server as web_server
+        except (ImportError, ValueError):
+            import web_server
         web_server.start_background_server(port=8765)
     except Exception:
         pass
@@ -725,6 +728,7 @@ def cmd_daemon(args):
                 analyzed = {e: lifecycle.analyze_account_lifecycle(q) for e, q in all_quotas.items()}
                 lifecycle.log_lifecycle_snapshot(analyzed)
                 notifier.check_and_notify_lifecycle_events(analyzed)
+                notifier.check_and_notify_burnrate_warnings(analyzed)
 
                 # Enforce IP Killswitch Shield
                 shield.evaluate_and_enforce_shield()
@@ -797,7 +801,9 @@ def cmd_switch(args):
             return 0
 
     surface = "both"
-    if getattr(args, "surface_app", False) and getattr(args, "surface_ide", False):
+    if getattr(args, "surface_all", False):
+        surface = "both"
+    elif getattr(args, "surface_app", False) and getattr(args, "surface_ide", False):
         surface = "both"
     elif getattr(args, "surface_app", False):
         surface = "desktop"
@@ -809,6 +815,8 @@ def cmd_switch(args):
         surface_tag = " [dim](Desktop App only)[/dim]"
     elif surface == "ide":
         surface_tag = " [dim](IDE only)[/dim]"
+    elif getattr(args, "surface_all", False):
+        surface_tag = " [dim](App + IDE)[/dim]"
 
     console.print(f"[cyan]Switching session to:[/cyan] [bold]{target_email}[/bold]{surface_tag}...")
     success, msg = switcher.switch_to_account(target_email, restart=not args.no_restart, surface=surface)
@@ -822,8 +830,13 @@ def cmd_switch(args):
 
 def cmd_web(args):
     port = getattr(args, "port", 8765)
+    bg = getattr(args, "bg", False)
     import socket
     from .tray import open_browser
+    try:
+        from . import server as web_server
+    except (ImportError, ValueError):
+        import web_server
 
     # Check if dashboard server is already listening
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -835,13 +848,17 @@ def cmd_web(args):
         console.print("[dim]Opening in your default browser...[/dim]")
         open_browser(url)
         return 0
-    else:
-        console.print(f"[bold cyan]Starting Web Dashboard at {url}...[/bold cyan]")
-        import web_server
+
+    if bg:
+        console.print(f"[bold cyan]Starting Web Dashboard in background at {url}...[/bold cyan]")
         web_server.start_background_server(port=port)
         open_browser(url)
-        from web_server import start_server
-        start_server(port=port)
+        return 0
+    else:
+        console.print(f"[bold cyan]Starting Web Dashboard at {url}...[/bold cyan]")
+        import threading
+        threading.Timer(0.4, open_browser, args=[url]).start()
+        web_server.start_server(port=port)
         return 0
 
 
@@ -1423,6 +1440,7 @@ def main():
     # web
     p_web = subparsers.add_parser("web", help="Start interactive browser dashboard")
     p_web.add_argument("--port", type=int, default=8765, help="Port to listen on (default: 8765)")
+    p_web.add_argument("--bg", "--background", action="store_true", help="Run dashboard in background daemon thread instead of blocking")
 
     # tray
     p_tray = subparsers.add_parser("tray", help="Start native Linux top-bar / system tray applet")
@@ -1434,6 +1452,7 @@ def main():
     p_switch.add_argument("--auto", action="store_true", help="Auto-switch to account with highest available quota without prompting")
     p_switch.add_argument("--desktop", "--app", dest="surface_app", action="store_true", help="Switch only the Antigravity Desktop App session (leave IDE untouched)")
     p_switch.add_argument("--ide", dest="surface_ide", action="store_true", help="Switch only the Antigravity IDE session (leave Desktop App untouched)")
+    p_switch.add_argument("-a", "--all", "--all-surfaces", dest="surface_all", action="store_true", help="Switch both Antigravity Desktop App and IDE sessions (default)")
     p_switch.add_argument("--no-restart", action="store_true", help="Swap session without restarting Antigravity")
 
     # doctor

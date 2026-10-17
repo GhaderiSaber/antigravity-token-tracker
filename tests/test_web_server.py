@@ -8,7 +8,7 @@ import threading
 import time
 from http.server import ThreadingHTTPServer
 
-import web_server
+from antigravity_tracker import server as web_server
 
 
 class TestWebServer(unittest.TestCase):
@@ -37,7 +37,8 @@ class TestWebServer(unittest.TestCase):
 
     def test_static_assets_serving(self):
         import glob
-        css_files = glob.glob("frontend/dist/assets/*.css")
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        css_files = glob.glob(os.path.join(repo_root, "frontend/dist/assets/*.css"))
         if css_files:
             rel_asset = os.path.basename(css_files[0])
             url = f"http://127.0.0.1:{self.port}/assets/{rel_asset}"
@@ -142,6 +143,43 @@ class TestWebServer(unittest.TestCase):
                 data = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             self.assertEqual(e.code, 400)
+
+    def test_packaged_server_module(self):
+        from antigravity_tracker import server
+        self.assertTrue(hasattr(server, "DashboardHandler"))
+        self.assertTrue(hasattr(server, "start_server"))
+        self.assertTrue(hasattr(server, "start_background_server"))
+        self.assertTrue(hasattr(server, "broadcast_event"))
+
+    def test_api_events_sse_stream(self):
+        url = f"http://127.0.0.1:{self.port}/api/events"
+        req = urllib.request.Request(url, headers={"Accept": "text/event-stream"})
+        resp = urllib.request.urlopen(req, timeout=5)
+        try:
+            self.assertEqual(resp.status, 200)
+            self.assertIn("text/event-stream", resp.headers.get("Content-Type", ""))
+
+            # Read the initial 'connected' event
+            line1 = resp.readline().decode("utf-8")
+            while line1.strip() == "" or line1.startswith(":"):
+                line1 = resp.readline().decode("utf-8")
+            self.assertTrue(line1.startswith("data:"))
+            data1 = json.loads(line1.replace("data:", "").strip())
+            self.assertEqual(data1.get("type"), "connected")
+
+            # Broadcast a custom test event
+            web_server.broadcast_event("test_push_event", {"active": True, "count": 42})
+
+            # Read broadcasted event from the stream
+            line2 = resp.readline().decode("utf-8")
+            while line2.strip() == "" or line2.startswith(":"):
+                line2 = resp.readline().decode("utf-8")
+            self.assertTrue(line2.startswith("data:"))
+            data2 = json.loads(line2.replace("data:", "").strip())
+            self.assertEqual(data2.get("type"), "test_push_event")
+            self.assertEqual(data2.get("data", {}).get("count"), 42)
+        finally:
+            resp.close()
 
 
 if __name__ == "__main__":

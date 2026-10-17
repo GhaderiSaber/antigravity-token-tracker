@@ -35,6 +35,7 @@ export default function App() {
   const [currentFilter, setCurrentFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
+  const [sseConnected, setSseConnected] = useState(false);
 
   const now = useLiveTicker();
 
@@ -73,7 +74,59 @@ export default function App() {
     loadData(false);
   }, []);
 
-  // Auto-sync polling
+  // Real-Time Server-Sent Events (SSE) Push Stream
+  useEffect(() => {
+    let evtSource = null;
+    let reconnectTimeout = null;
+
+    function connectSSE() {
+      try {
+        evtSource = new EventSource('/api/events');
+
+        evtSource.onopen = () => {
+          setSseConnected(true);
+        };
+
+        evtSource.onmessage = (event) => {
+          try {
+            const payload = JSON.parse(event.data);
+            if (payload.type === 'connected') {
+              setSseConnected(true);
+            } else if ([
+              'account_switched',
+              'surfaces_synced',
+              'shield_updated',
+              'balancer_updated',
+              'balancer_rotated'
+            ].includes(payload.type)) {
+              loadData(false);
+            }
+          } catch (e) {
+            console.error('SSE message parse error:', e);
+          }
+        };
+
+        evtSource.onerror = () => {
+          setSseConnected(false);
+          if (evtSource) {
+            evtSource.close();
+          }
+          reconnectTimeout = setTimeout(connectSSE, 5000);
+        };
+      } catch (err) {
+        console.error('SSE initialization error:', err);
+      }
+    }
+
+    connectSSE();
+
+    return () => {
+      if (evtSource) evtSource.close();
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+    };
+  }, []);
+
+  // Auto-sync polling fallback
   useEffect(() => {
     if (syncInterval <= 0) return;
     const timer = setInterval(() => {
@@ -286,6 +339,7 @@ export default function App() {
         now={now}
         theme={theme}
         onToggleTheme={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+        sseConnected={sseConnected}
       />
 
       {/* Executive KPI Summary Row */}

@@ -43,6 +43,9 @@ class TestSyncAndOrdering(unittest.TestCase):
         self.assertEqual(sorted_accs[1][0], "other@example.com")
         self.assertEqual(sorted_accs[2][0], "duzen@example.com")
 
+    @patch("antigravity_tracker.auth.extract_user_email_from_state_db", return_value=None)
+    @patch("antigravity_tracker.auth.extract_tokens_from_state_db", return_value=None)
+    @patch("antigravity_tracker.auth.fetch_user_info", return_value={"name": "Saber", "picture": ""})
     @patch("antigravity_tracker.switcher.snapshot_desktop_session")
     @patch("antigravity_tracker.switcher.snapshot_ide_session")
     @patch("antigravity_tracker.auth.discover_antigravity_ide")
@@ -50,7 +53,8 @@ class TestSyncAndOrdering(unittest.TestCase):
     @patch("antigravity_tracker.auth.get_desktop_keyring_token")
     @patch("antigravity_tracker.accounts.load_accounts")
     @patch("antigravity_tracker.accounts.save_accounts")
-    def test_sync_from_antigravity_precedence(self, mock_save, mock_load, mock_kr, mock_desk, mock_ide, mock_snap_ide, mock_snap_desk):
+    def test_sync_from_antigravity_precedence(self, mock_save, mock_load, mock_kr, mock_desk, mock_ide,
+                                             mock_snap_ide, mock_snap_desk, mock_uinfo, mock_ext_toks, mock_ext_email):
         mock_load.return_value = {
             "duzen@example.com": {"email": "duzen@example.com", "tier": "Standard"},
             "saber@example.com": {"email": "saber@example.com", "tier": "Google AI Pro"}
@@ -150,6 +154,43 @@ class TestSyncAndOrdering(unittest.TestCase):
             mock_rest_ide.assert_called_with("duzen@example.com")
             mock_rest_desk.assert_not_called()
             mock_record.assert_called_with("saber@example.com", "duzen@example.com", "ide")
+
+        mock_rest_desk.reset_mock()
+        mock_rest_ide.reset_mock()
+        mock_record.reset_mock()
+
+        # Test both surfaces switch to duzen
+        with patch("os.path.isdir", return_value=True), patch("os.path.isfile", return_value=True):
+            ok, msg = switcher.switch_to_account("duzen@example.com", restart=False, surface="both")
+            self.assertTrue(ok)
+            mock_rest_desk.assert_called_with("duzen@example.com")
+            mock_rest_ide.assert_called_with("duzen@example.com")
+            mock_record.assert_called_with("saber@example.com", "duzen@example.com", "both")
+
+    def test_cli_switch_all_surfaces_flag_parsing(self):
+        """Verify CLI parser correctly parses -a, --all, and --all-surfaces flags."""
+        import argparse
+        from antigravity_tracker import cli
+
+        # Check argument parser definition
+        parser = argparse.ArgumentParser()
+        subparsers = parser.add_subparsers(dest="command")
+        p_switch = subparsers.add_parser("switch")
+        p_switch.add_argument("target", nargs="?", default=None)
+        p_switch.add_argument("--auto", action="store_true")
+        p_switch.add_argument("--desktop", "--app", dest="surface_app", action="store_true")
+        p_switch.add_argument("--ide", dest="surface_ide", action="store_true")
+        p_switch.add_argument("-a", "--all", "--all-surfaces", dest="surface_all", action="store_true")
+        p_switch.add_argument("--no-restart", action="store_true")
+
+        args1 = parser.parse_args(["switch", "user@example.com", "-a"])
+        self.assertTrue(args1.surface_all)
+
+        args2 = parser.parse_args(["switch", "user@example.com", "--all-surfaces"])
+        self.assertTrue(args2.surface_all)
+
+        args3 = parser.parse_args(["switch", "user@example.com", "--all"])
+        self.assertTrue(args3.surface_all)
 
 
 if __name__ == "__main__":
