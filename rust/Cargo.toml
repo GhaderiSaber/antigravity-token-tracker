@@ -40,6 +40,7 @@ sysinfo = "0.33"
 libc = "0.2"
 thiserror = "2.0"
 nix = { version = "0.29", features = ["signal", "process"] }
+base64 = "0.22"
 
 [dev-dependencies]
 trycmd = "1"
