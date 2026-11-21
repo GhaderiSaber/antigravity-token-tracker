@@ -55,5 +55,9 @@ codegen-units = 1
 unsafe_code = "allow"
 
 [lints.clippy]
+assigning_clones = "warn"
+uninlined_format_args = "warn"
+redundant_closure_for_method_calls = "warn"
+unnecessary_unwrap = "warn"
 manual_let_else = "warn"
 map_unwrap_or = "warn"

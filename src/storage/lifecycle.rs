@@ -76,12 +76,12 @@ pub fn format_countdown(reset_time_str: &str, now: DateTime<Utc>) -> (String, f6
 
     let mut parts = Vec::new();
     if days > 0 {
-        parts.push(format!("{}d", days));
+        parts.push(format!("{days}d"));
     }
     if hours > 0 || days > 0 {
-        parts.push(format!("{}h", hours));
+        parts.push(format!("{hours}h"));
     }
-    parts.push(format!("{}m", minutes));
+    parts.push(format!("{minutes}m"));
 
     (parts.join(" "), total_secs)
 }
@@ -181,8 +181,7 @@ pub fn compute_switching_recommendation(
                         let pct = w.remaining_percent.unwrap_or(0.0);
                         let cd = w.countdown.as_deref().unwrap_or("N/A");
                         return Some(format!(
-                            "Weekly Gemini tokens on {} are EXHAUSTED ({:.1}%). Full refresh in {}.",
-                            email, pct, cd
+                            "Weekly Gemini tokens on {email} are EXHAUSTED ({pct:.1}%). Full refresh in {cd}."
                         ));
                     }
                 }
@@ -230,13 +229,11 @@ pub fn compute_switching_recommendation(
     {
         if let Some((best_email, best_pct)) = healthy_accs.first() {
             return Some(format!(
-                "⚠️ Active account ({}) Gemini quota is EXHAUSTED! Switch to {} which has {:.1}% quota available.",
-                active_email, best_email, best_pct
+                "⚠️ Active account ({active_email}) Gemini quota is EXHAUSTED! Switch to {best_email} which has {best_pct:.1}% quota available."
             ));
         } else {
             return Some(format!(
-                "⚠️ Active account ({}) Gemini quota is EXHAUSTED, and all backup accounts are also depleted!",
-                active_email
+                "⚠️ Active account ({active_email}) Gemini quota is EXHAUSTED, and all backup accounts are also depleted!"
             ));
         }
     }

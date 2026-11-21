@@ -99,7 +99,7 @@ pub async fn fetch_user_info(access_token: &str) -> Option<UserInfo> {
 
     let resp = client
         .get(USERINFO_URL)
-        .header("Authorization", format!("Bearer {}", access_token))
+        .header("Authorization", format!("Bearer {access_token}"))
         .send()
         .await
         .ok()?;

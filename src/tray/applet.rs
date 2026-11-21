@@ -182,7 +182,7 @@ impl Tray for AntigravityTray {
                 shield_icon, st.geo_summary, shield_state
             )
         } else {
-            format!("{} IP Killswitch Shield: [{}]", shield_icon, shield_state)
+            format!("{shield_icon} IP Killswitch Shield: [{shield_state}]")
         };
 
         items.push(
@@ -261,10 +261,7 @@ impl Tray for AntigravityTray {
         let bal_strat = &st.balancer_strategy;
         items.push(
             StandardItem {
-                label: format!(
-                    "{} Auto-Balancer: [{} - {}]",
-                    bal_icon, bal_state, bal_strat
-                ),
+                label: format!("{bal_icon} Auto-Balancer: [{bal_state} - {bal_strat}]"),
                 activate: Box::new(|_| {
                     let mut cfg = crate::balancer::balancer::load_balancer_config();
                     cfg.enabled = !cfg.enabled;

@@ -257,8 +257,7 @@ pub fn evaluate_round_robin_strategy(
 
     let elapsed_min = (time_elapsed / 60.0) as u64;
     let reason = format!(
-        "Round-robin rotation window reached ({}m elapsed >= {}m target)",
-        elapsed_min, interval_minutes
+        "Round-robin rotation window reached ({elapsed_min}m elapsed >= {interval_minutes}m target)"
     );
     Some((next_acc.clone(), reason))
 }

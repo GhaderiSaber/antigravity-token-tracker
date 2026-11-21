@@ -50,7 +50,7 @@ mod tests {
         // 1. Insert dummy oauthToken payload
         let raw_token_inner = b"dummy prefix ya29.a0TestAccessToken123456789012345678901234567890 mid 1//01TestRefreshToken12345678901234567890 end";
         let encoded_inner = BASE64.encode(raw_token_inner);
-        let outer_payload = format!("some_header_{}_footer", encoded_inner);
+        let outer_payload = format!("some_header_{encoded_inner}_footer");
         let encoded_outer = BASE64.encode(outer_payload.as_bytes());
 
         conn.execute(

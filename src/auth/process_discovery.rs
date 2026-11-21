@@ -42,8 +42,7 @@ pub async fn query_local_user_status(
     csrf_token: &str,
 ) -> Option<(String, String, String)> {
     let url = format!(
-        "https://127.0.0.1:{}/exa.language_server_pb.LanguageServerService/GetUserStatus",
-        port
+        "https://127.0.0.1:{port}/exa.language_server_pb.LanguageServerService/GetUserStatus"
     );
 
     let client = reqwest::Client::builder()
@@ -91,8 +90,7 @@ pub async fn query_local_user_status(
 
 pub async fn fetch_quota_from_desktop_app(port: u16, csrf_token: &str) -> Option<Value> {
     let url = format!(
-        "https://127.0.0.1:{}/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary",
-        port
+        "https://127.0.0.1:{port}/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary"
     );
 
     let client = reqwest::Client::builder()

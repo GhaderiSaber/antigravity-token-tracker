@@ -223,19 +223,19 @@ fn run_list(command: &str, _matches: &ArgMatches) -> ExitCode {
             let name = acc.name.as_deref().unwrap_or("");
             let tier = acc.tier.as_deref().unwrap_or("Standard");
 
-            let email_col = format!(" {:<28}", email);
-            let name_col = format!("{:<16}", name);
+            let email_col = format!(" {email:<28}");
+            let name_col = format!("{name:<16}");
 
             if acc.is_current_desktop_session == Some(true)
                 && acc.is_current_ide_session == Some(true)
             {
-                println!("{}{}{}   App + IDE    ", email_col, name_col, tier);
+                println!("{email_col}{name_col}{tier}   App + IDE    ");
             } else if acc.is_current_desktop_session == Some(true) {
-                println!("{}{}{}   Antigravity App  ", email_col, name_col, tier);
+                println!("{email_col}{name_col}{tier}   Antigravity App  ");
             } else if acc.is_current_ide_session == Some(true) {
-                println!("{}{}{}   Antigravity IDE  ", email_col, name_col, tier);
+                println!("{email_col}{name_col}{tier}   Antigravity IDE  ");
             } else {
-                println!("{}{}{}  Inactive / Stored ", email_col, name_col, tier);
+                println!("{email_col}{name_col}{tier}  Inactive / Stored ");
             }
         }
 
@@ -323,8 +323,7 @@ fn run_shield(command: &str, _matches: &ArgMatches) -> ExitCode {
         if !valid_actions.contains(&action_str) {
             let choice_repr = python_repr_choice(action_str);
             eprintln!(
-                "usage: agy-token shield [-h] [--mode {{restricted,whitelist}}]\n                        [--allow COUNTRIES]\n                        [--action {{kill_process,kill_network,both}}]\n                        [{{status,on,enable,off,disable,mode,allow,action,trigger}}]\n                        [extra_arg]\nagy-token shield: error: argument shield_action: invalid choice: {} (choose from status, on, enable, off, disable, mode, allow, action, trigger)",
-                choice_repr
+                "usage: agy-token shield [-h] [--mode {{restricted,whitelist}}]\n                        [--allow COUNTRIES]\n                        [--action {{kill_process,kill_network,both}}]\n                        [{{status,on,enable,off,disable,mode,allow,action,trigger}}]\n                        [extra_arg]\nagy-token shield: error: argument shield_action: invalid choice: {choice_repr} (choose from status, on, enable, off, disable, mode, allow, action, trigger)"
             );
             return ExitCode::from(2);
         }
@@ -371,7 +370,7 @@ fn run_shield(command: &str, _matches: &ArgMatches) -> ExitCode {
                     .map(|c| c.trim().to_uppercase())
                     .filter(|c| !c.is_empty())
                     .collect();
-                cfg.allowed_countries = countries.clone();
+                cfg.allowed_countries.clone_from(&countries);
                 let _ = tracker_lib::shield::save_shield_config(config_dir, &cfg);
                 println!(
                     "✓ Allowed countries whitelist updated to: {}\n",
@@ -487,7 +486,7 @@ fn run_sync(command: &str, _matches: &ArgMatches) -> ExitCode {
         match rt.block_on(tracker_lib::auth::sync_from_antigravity(&storage)) {
             Ok((active_email, all_accs)) => {
                 if let Some(em) = active_email {
-                    println!("✓ Successfully synced active session: {}", em);
+                    println!("✓ Successfully synced active session: {em}");
                     println!("Total registered accounts: {}", all_accs.len());
                     for (acc_email, acc) in all_accs {
                         let mut surfaces = Vec::new();
@@ -503,7 +502,7 @@ fn run_sync(command: &str, _matches: &ArgMatches) -> ExitCode {
                             format!("({})", surfaces.join(", "))
                         };
                         let tier = acc.tier.as_deref().unwrap_or("Standard");
-                        println!("  • {} [{}] {}", acc_email, tier, surface_str);
+                        println!("  • {acc_email} [{tier}] {surface_str}");
                     }
                 } else {
                     println!("No active Antigravity session found.");
@@ -614,7 +613,7 @@ fn run_pace_check(command: &str, _matches: &ArgMatches) -> ExitCode {
                         if let Some(w) = g.get("weekly") {
                             let rem_pct = w
                                 .get("remainingPercent")
-                                .and_then(|v| v.as_f64())
+                                .and_then(serde_json::Value::as_f64)
                                 .unwrap_or(0.0);
                             let countdown =
                                 w.get("countdown").and_then(|v| v.as_str()).unwrap_or("");

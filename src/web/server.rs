@@ -235,7 +235,7 @@ async fn post_shield_handler(Json(body): Json<serde_json::Value>) -> Json<serde_
     let config_dir = default_config_dir();
     let mut cfg = load_shield_config(&config_dir);
 
-    if let Some(enabled) = body.get("enabled").and_then(|v| v.as_bool()) {
+    if let Some(enabled) = body.get("enabled").and_then(serde_json::Value::as_bool) {
         cfg.enabled = enabled;
         let _ = set_shield_enabled(&config_dir, enabled);
     }
@@ -245,7 +245,7 @@ async fn post_shield_handler(Json(body): Json<serde_json::Value>) -> Json<serde_
     if let Some(allowed) = body.get("allowed_countries").and_then(|v| v.as_array()) {
         cfg.allowed_countries = allowed
             .iter()
-            .filter_map(|c| c.as_str().map(|s| s.to_string()))
+            .filter_map(|c| c.as_str().map(std::string::ToString::to_string))
             .collect();
     }
     if let Some(action) = body.get("action").and_then(|v| v.as_str()) {
@@ -283,7 +283,7 @@ async fn get_balancer_handler() -> Json<serde_json::Value> {
 async fn post_balancer_handler(Json(body): Json<serde_json::Value>) -> Json<serde_json::Value> {
     let mut cfg = load_balancer_config();
 
-    if let Some(enabled) = body.get("enabled").and_then(|v| v.as_bool()) {
+    if let Some(enabled) = body.get("enabled").and_then(serde_json::Value::as_bool) {
         cfg.enabled = enabled;
     }
     if let Some(strat_val) = body.get("strategy") {
@@ -295,16 +295,22 @@ async fn post_balancer_handler(Json(body): Json<serde_json::Value>) -> Json<serd
             }
         }
     }
-    if let Some(spread) = body.get("watermark_spread_pct").and_then(|v| v.as_f64()) {
+    if let Some(spread) = body
+        .get("watermark_spread_pct")
+        .and_then(serde_json::Value::as_f64)
+    {
         cfg.watermark_spread_pct = spread;
     }
     if let Some(interval) = body
         .get("round_robin_interval_minutes")
-        .and_then(|v| v.as_u64())
+        .and_then(serde_json::Value::as_u64)
     {
         cfg.round_robin_interval_minutes = interval;
     }
-    if let Some(exp) = body.get("expiry_window_hours").and_then(|v| v.as_u64()) {
+    if let Some(exp) = body
+        .get("expiry_window_hours")
+        .and_then(serde_json::Value::as_u64)
+    {
         cfg.expiry_window_hours = exp;
     }
     let _ = save_balancer_config(&cfg);

@@ -35,7 +35,7 @@ pub fn get_flag_emoji(country_code: &str) -> String {
         let base = 0x1F1E6_u32;
         let c1 = char::from_u32(base + (chars[0] as u32 - 'A' as u32)).unwrap_or('🌐');
         let c2 = char::from_u32(base + (chars[1] as u32 - 'A' as u32)).unwrap_or('🌐');
-        format!("{}{}", c1, c2)
+        format!("{c1}{c2}")
     } else {
         "🌐".to_string()
     }
@@ -68,7 +68,7 @@ pub fn format_ip_summary(geo: &EgressGeo, include_ip: bool) -> String {
     if include_ip && geo.ip != "Unknown" && !geo.ip.is_empty() {
         format!("{} {} ({})", flag, loc_part, geo.ip)
     } else {
-        format!("{} {}", flag, loc_part)
+        format!("{flag} {loc_part}")
     }
 }
 
@@ -162,7 +162,7 @@ pub async fn query_ip_geo() -> Option<EgressGeo> {
             .get("flag")
             .and_then(|f| f.get("emoji"))
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
 
         let flag = flag_from_val.unwrap_or_else(|| get_flag_emoji(&country_code));
         let is_restricted = is_restricted_country(&country_code);

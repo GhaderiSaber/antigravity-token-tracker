@@ -19,8 +19,7 @@ pub fn render_account_table(email: &str, account: &AccountQuotaResult, is_active
     };
     let active_str = if is_active { " (● ACTIVE)" } else { "" };
     out.push_str(&format!(
-        "╭─ Account: {} [{}{}] ──────────────────────────────╮\n",
-        email, tier, active_str
+        "╭─ Account: {email} [{tier}{active_str}] ──────────────────────────────╮\n"
     ));
     out.push_str(&format!(
         "│ {:<28} │ {:<18} │ {:<15} │ {:<12} │\n",
@@ -60,8 +59,7 @@ pub fn render_account_table(email: &str, account: &AccountQuotaResult, is_active
                 .unwrap_or("HEALTHY");
 
             out.push_str(&format!(
-                "│ {:<28} │ {:<18} │ {:<15} │ {:<12} │\n",
-                g_name, w_bar, w_reset, badge
+                "│ {g_name:<28} │ {w_bar:<18} │ {w_reset:<15} │ {badge:<12} │\n"
             ));
         }
     }

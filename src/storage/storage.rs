@@ -128,7 +128,7 @@ impl StorageManager {
                 "Account must contain a valid email".into(),
             ));
         }
-        account.email = email.clone();
+        account.email.clone_from(&email);
 
         let mut registry = self.load_accounts()?;
         let now = chrono::Utc::now().timestamp_millis() as f64 / 1000.0;
@@ -136,14 +136,18 @@ impl StorageManager {
 
         if let Some(existing) = registry.accounts.get(&email) {
             // Preserve existing refresh token if new one is empty
-            if account.refresh_token.as_ref().is_none_or(|t| t.is_empty()) {
-                account.refresh_token = existing.refresh_token.clone();
+            if account
+                .refresh_token
+                .as_ref()
+                .is_none_or(std::string::String::is_empty)
+            {
+                account.refresh_token.clone_from(&existing.refresh_token);
             }
             if account.tier.is_none() {
-                account.tier = existing.tier.clone();
+                account.tier.clone_from(&existing.tier);
             }
             if account.name.is_none() {
-                account.name = existing.name.clone();
+                account.name.clone_from(&existing.name);
             }
         }
 

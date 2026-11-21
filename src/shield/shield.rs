@@ -128,7 +128,7 @@ pub fn kill_antigravity_processes(force: bool) -> (usize, Vec<i32>) {
     let mut remaining = pids.clone();
     for _ in 0..15 {
         sleep(Duration::from_millis(100));
-        remaining.retain(|&p| Path::new(&format!("/proc/{}", p)).exists());
+        remaining.retain(|&p| Path::new(&format!("/proc/{p}")).exists());
         if remaining.is_empty() {
             break;
         }
@@ -162,12 +162,11 @@ pub fn is_ip_allowed(geo_info: &EgressGeo, cfg: &ShieldConfig) -> (bool, String)
             return (
                 false,
                 format!(
-                    "Egress IP {} is located in restricted region: {} ({})",
-                    ip, country_name, country_code
+                    "Egress IP {ip} is located in restricted region: {country_name} ({country_code})"
                 ),
             );
         }
-        (true, format!("Country {} is safe", country_code))
+        (true, format!("Country {country_code} is safe"))
     } else if cfg.mode == "whitelist" {
         let allowed: Vec<String> = cfg
             .allowed_countries
@@ -187,7 +186,7 @@ pub fn is_ip_allowed(geo_info: &EgressGeo, cfg: &ShieldConfig) -> (bool, String)
         }
         (
             true,
-            format!("Country {} is in allowed whitelist", country_code),
+            format!("Country {country_code} is in allowed whitelist"),
         )
     } else {
         (true, "Policy check passed".to_string())

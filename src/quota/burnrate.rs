@@ -35,7 +35,10 @@ pub fn load_snapshots(
                 continue;
             }
             if let Ok(val) = serde_json::from_str::<Value>(trimmed) {
-                let ts = val.get("timestamp").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let ts = val
+                    .get("timestamp")
+                    .and_then(serde_json::Value::as_f64)
+                    .unwrap_or(0.0);
                 if ts >= min_ts {
                     snapshots.push(val);
                 }
@@ -44,8 +47,14 @@ pub fn load_snapshots(
     }
 
     snapshots.sort_by(|a, b| {
-        let ts_a = a.get("timestamp").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let ts_b = b.get("timestamp").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let ts_a = a
+            .get("timestamp")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0);
+        let ts_b = b
+            .get("timestamp")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0);
         ts_a.total_cmp(&ts_b)
     });
 
@@ -75,7 +84,7 @@ pub fn extract_account_quota_pct(snapshot: &Value, email: &str, group_name: &str
     // Exact match
     for (g_name, g_info) in groups {
         if g_name.eq_ignore_ascii_case(group_name)
-            && let Some(pct) = g_info.get("weekly_pct").and_then(|v| v.as_f64())
+            && let Some(pct) = g_info.get("weekly_pct").and_then(serde_json::Value::as_f64)
         {
             return Some(pct);
         }
@@ -84,7 +93,7 @@ pub fn extract_account_quota_pct(snapshot: &Value, email: &str, group_name: &str
     // Substring match
     for (g_name, g_info) in groups {
         if g_name.to_lowercase().contains("gemini")
-            && let Some(pct) = g_info.get("weekly_pct").and_then(|v| v.as_f64())
+            && let Some(pct) = g_info.get("weekly_pct").and_then(serde_json::Value::as_f64)
         {
             return Some(pct);
         }
@@ -92,7 +101,7 @@ pub fn extract_account_quota_pct(snapshot: &Value, email: &str, group_name: &str
 
     // Fallback to first
     for g_info in groups.values() {
-        if let Some(pct) = g_info.get("weekly_pct").and_then(|v| v.as_f64()) {
+        if let Some(pct) = g_info.get("weekly_pct").and_then(serde_json::Value::as_f64) {
             return Some(pct);
         }
     }
@@ -106,7 +115,7 @@ pub fn format_eta_countdown(seconds: f64) -> String {
     }
     let mins = (seconds / 60.0).round() as i64;
     if mins < 60 {
-        return format!("~{}m", mins);
+        return format!("~{mins}m");
     }
     let hours = mins / 60;
     let rem_mins = mins % 60;
@@ -115,9 +124,9 @@ pub fn format_eta_countdown(seconds: f64) -> String {
         return format!("~{}d {}h", days, hours % 24);
     }
     if rem_mins == 0 {
-        return format!("~{}h", hours);
+        return format!("~{hours}h");
     }
-    format!("~{}h {}m", hours, rem_mins)
+    format!("~{hours}h {rem_mins}m")
 }
 
 pub fn format_depletion_clock(target_timestamp: f64) -> String {
@@ -151,7 +160,10 @@ pub fn calculate_account_velocity(
 
     let mut series: Vec<(f64, f64)> = Vec::new();
     for s in snapshots {
-        let ts = s.get("timestamp").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let ts = s
+            .get("timestamp")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0);
         if ts >= min_time
             && let Some(pct) = extract_account_quota_pct(s, email, group_name)
         {

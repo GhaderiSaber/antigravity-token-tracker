@@ -39,16 +39,16 @@ pub async fn sync_from_antigravity(
             }
         }
 
-        existing.email = d_email.clone();
+        existing.email.clone_from(d_email);
         if let Some(s) = &desktop_session {
             if s.name.is_some() {
-                existing.name = s.name.clone();
+                existing.name.clone_from(&s.name);
             }
             if s.tier.is_some() {
-                existing.tier = s.tier.clone();
+                existing.tier.clone_from(&s.tier);
             }
             existing.app_port = s.port;
-            existing.app_csrf_token = s.csrf_token.clone();
+            existing.app_csrf_token.clone_from(&s.csrf_token);
         }
 
         if !access_tok.is_empty() {
@@ -72,13 +72,13 @@ pub async fn sync_from_antigravity(
             active_email = Some(i_email.clone());
         }
         let existing = registry.accounts.entry(i_email.clone()).or_default();
-        existing.email = i_email.clone();
+        existing.email.clone_from(i_email);
         if let Some(s) = &ide_proc_session {
             if s.name.is_some() && existing.name.is_none() {
-                existing.name = s.name.clone();
+                existing.name.clone_from(&s.name);
             }
             if s.tier.is_some() {
-                existing.tier = s.tier.clone();
+                existing.tier.clone_from(&s.tier);
             }
         }
         existing.active = Some(true);
@@ -97,7 +97,7 @@ pub async fn sync_from_antigravity(
         }
 
         let existing = registry.accounts.entry(s_email.clone()).or_default();
-        existing.email = s_email.clone();
+        existing.email.clone_from(&s_email);
 
         let tier = extract_user_tier(&db_path);
         if existing.tier.is_none() {

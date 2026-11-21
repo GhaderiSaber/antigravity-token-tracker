@@ -57,7 +57,7 @@ pub fn get_historical_quota(email: &str) -> Option<QuotaSnapshot> {
                     .any(|v| v.get("weekly_pct").is_some_and(|p| !p.is_null()));
                 if has_weekly {
                     last_record = Some(acc_val.clone());
-                    last_timestamp = data.get("timestamp").and_then(|t| t.as_f64());
+                    last_timestamp = data.get("timestamp").and_then(serde_json::Value::as_f64);
                 }
             }
         }
@@ -68,12 +68,12 @@ pub fn get_historical_quota(email: &str) -> Option<QuotaSnapshot> {
     let mut parsed_groups = Vec::new();
 
     for (g_name, g_vals) in groups_obj {
-        let w_pct = g_vals.get("weekly_pct").and_then(|v| v.as_f64());
+        let w_pct = g_vals.get("weekly_pct").and_then(serde_json::Value::as_f64);
         let w_reset = g_vals
             .get("weekly_reset")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        let f_pct = g_vals.get("5h_pct").and_then(|v| v.as_f64());
+        let f_pct = g_vals.get("5h_pct").and_then(serde_json::Value::as_f64);
 
         let weekly_bucket = w_pct.map(|pct| QuotaBucket {
             bucket_id: Some(format!(
@@ -160,7 +160,7 @@ pub fn parse_quota_summary(quota_summary_data: &Value) -> Vec<QuotaGroup> {
                 .to_string();
             let remaining_fraction = b
                 .get("remainingFraction")
-                .and_then(|v| v.as_f64())
+                .and_then(serde_json::Value::as_f64)
                 .unwrap_or(0.0);
             let remaining_percent = ((remaining_fraction * 100.0) * 100.0).round() / 100.0;
             let reset_time = b
@@ -218,7 +218,7 @@ pub fn parse_models_quota(models_data: &Value) -> Vec<ModelQuota> {
             };
             let frac = mb
                 .get("remainingFraction")
-                .and_then(|v| v.as_f64())
+                .and_then(serde_json::Value::as_f64)
                 .unwrap_or(0.0);
             let pct = ((frac * 100.0) * 100.0).round() / 100.0;
             let reset = mb
