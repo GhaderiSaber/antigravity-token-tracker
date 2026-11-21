@@ -1,0 +1,55 @@
+[package]
+name = "run_tracker"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Antigravity Token & Quota Lifecycle Tracker"
+rust-version = "1.85"
+
+[[bin]]
+name = "run_tracker"
+path = "src/main.rs"
+
+[lib]
+name = "tracker_lib"
+path = "src/lib.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rusqlite = { version = "0.33", features = ["bundled"] }
+zbus = { version = "5.19", default-features = false, features = ["tokio"] }
+axum = { version = "0.8", features = ["tokio"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+rust-embed = { version = "8.14", features = ["mime-guess"] }
+mime_guess = "2.0"
+image = { version = "0.25", default-features = false, features = ["png"] }
+ksni = "0.3.7"
+fs2 = "0.4"
+inquire = "0.9"
+ratatui = "0.30"
+crossterm = "0.29"
+clap = { version = "4", features = ["derive"] }
+open = "5.4"
+regex = "1.10"
+dirs = "5.0"
+sysinfo = "0.33"
+libc = "0.2"
+
+[dev-dependencies]
+trycmd = "1"
+tempfile = "3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+manual_let_else = "warn"
+map_unwrap_or = "warn"
