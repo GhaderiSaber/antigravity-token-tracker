@@ -1,5 +1,5 @@
 use super::models::{BalancerConfig, BalancerState, BalancerStrategy};
-use super::switcher::{has_account_credentials, switch_to_account};
+use super::switcher::{SwitchSurface, has_account_credentials, switch_to_account};
 use crate::quota::AccountQuotaResult;
 use crate::storage::load_accounts;
 use serde::{Deserialize, Serialize};
@@ -418,42 +418,45 @@ pub async fn evaluate_and_execute_balancer(
         };
     }
 
-    let (success, switch_msg) = switch_to_account(&target_email, cfg.auto_restart, "both").await;
-    if success {
-        state.last_rotation_timestamp = Some(now);
-        state.last_from_email = Some(from_email.clone());
-        state.last_to_email = Some(target_email.clone());
-        state.rotation_count += 1;
-        let _ = save_balancer_state(&state);
+    match switch_to_account(&target_email, cfg.auto_restart, SwitchSurface::Both).await {
+        Ok(_switch_msg) => {
+            state.last_rotation_timestamp = Some(now);
+            state.last_from_email = Some(from_email.clone());
+            state.last_to_email = Some(target_email.clone());
+            state.rotation_count += 1;
+            let _ = save_balancer_state(&state);
 
-        BalancerDecision {
-            triggered: true,
-            reason: reason_msg.clone(),
-            message: format!(
-                "Successfully rotated to {target_email} ({target_pct:.1}% quota): {reason_msg}"
-            ),
-            dry_run: Some(false),
-            strategy: Some(strategy),
-            from_account: Some(from_email),
-            from_quota_pct: Some(from_pct),
-            to_account: Some(target_email),
-            to_quota_pct: Some(target_pct),
-            cooldown_remaining: None,
-            error: None,
+            BalancerDecision {
+                triggered: true,
+                reason: reason_msg.clone(),
+                message: format!(
+                    "Successfully rotated to {target_email} ({target_pct:.1}% quota): {reason_msg}"
+                ),
+                dry_run: Some(false),
+                strategy: Some(strategy),
+                from_account: Some(from_email),
+                from_quota_pct: Some(from_pct),
+                to_account: Some(target_email),
+                to_quota_pct: Some(target_pct),
+                cooldown_remaining: None,
+                error: None,
+            }
         }
-    } else {
-        BalancerDecision {
-            triggered: false,
-            reason: "SWITCH_FAILED".into(),
-            message: format!("Rotation switch failed: {switch_msg}"),
-            dry_run: Some(false),
-            strategy: Some(strategy),
-            from_account: Some(from_email),
-            from_quota_pct: Some(from_pct),
-            to_account: Some(target_email),
-            to_quota_pct: Some(target_pct),
-            cooldown_remaining: None,
-            error: Some(switch_msg),
+        Err(err) => {
+            let err_msg = err.to_string();
+            BalancerDecision {
+                triggered: false,
+                reason: "SWITCH_FAILED".into(),
+                message: format!("Rotation switch failed: {err_msg}"),
+                dry_run: Some(false),
+                strategy: Some(strategy),
+                from_account: Some(from_email),
+                from_quota_pct: Some(from_pct),
+                to_account: Some(target_email),
+                to_quota_pct: Some(target_pct),
+                cooldown_remaining: None,
+                error: Some(err_msg),
+            }
         }
     }
 }

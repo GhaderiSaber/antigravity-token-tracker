@@ -210,4 +210,86 @@ mod tests {
         let result = launch_antigravity();
         let _ = result;
     }
+
+    #[test]
+    fn test_switch_surface_display_and_parse() {
+        assert_eq!(
+            "desktop".parse::<SwitchSurface>().unwrap(),
+            SwitchSurface::Desktop
+        );
+        assert_eq!("ide".parse::<SwitchSurface>().unwrap(), SwitchSurface::Ide);
+        assert_eq!(
+            "both".parse::<SwitchSurface>().unwrap(),
+            SwitchSurface::Both
+        );
+        assert_eq!(SwitchSurface::Both.to_string(), "both");
+        assert_eq!(SwitchSurface::Desktop.to_string(), "desktop");
+        assert_eq!(SwitchSurface::Ide.to_string(), "ide");
+
+        // Case-insensitive & trimming
+        assert_eq!(
+            "  DESKTOP  ".parse::<SwitchSurface>().unwrap(),
+            SwitchSurface::Desktop
+        );
+        assert_eq!(
+            "Both".parse::<SwitchSurface>().unwrap(),
+            SwitchSurface::Both
+        );
+        assert_eq!(
+            "app".parse::<SwitchSurface>().unwrap(),
+            SwitchSurface::Desktop
+        );
+        assert_eq!("all".parse::<SwitchSurface>().unwrap(), SwitchSurface::Both);
+
+        // Invalid
+        assert!("invalid_surface".parse::<SwitchSurface>().is_err());
+    }
+
+    #[test]
+    fn test_switch_error_display() {
+        let err_not_found = SwitchError::AccountNotFound("test@example.com".into());
+        assert_eq!(
+            err_not_found.to_string(),
+            "Account not found: test@example.com"
+        );
+
+        let err_update = SwitchError::UpdateFailed("disk read-only".into());
+        assert_eq!(
+            err_update.to_string(),
+            "Failed to update credentials: disk read-only"
+        );
+
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied");
+        let err_io = SwitchError::Io(io_err);
+        assert!(err_io.to_string().contains("access denied"));
+    }
+
+    #[test]
+    fn test_switch_surface_serde() {
+        let serialized = serde_json::to_string(&SwitchSurface::Desktop).unwrap();
+        assert_eq!(serialized, "\"desktop\"");
+
+        let deserialized: SwitchSurface = serde_json::from_str("\"ide\"").unwrap();
+        assert_eq!(deserialized, SwitchSurface::Ide);
+
+        let deserialized_both: SwitchSurface = serde_json::from_str("\"both\"").unwrap();
+        assert_eq!(deserialized_both, SwitchSurface::Both);
+    }
+
+    #[tokio::test]
+    async fn test_switch_to_account_not_found() {
+        let res = switch_to_account(
+            "nonexistent_email_12345@example.com",
+            false,
+            SwitchSurface::Both,
+        )
+        .await;
+        assert!(res.is_err());
+        match res.unwrap_err() {
+            SwitchError::AccountNotFound(msg) => {
+                assert!(msg.contains("nonexistent_email_12345@example.com"));
+            }
+            other => panic!("Expected AccountNotFound, got: {other:?}"),
+        }
+    }
 }

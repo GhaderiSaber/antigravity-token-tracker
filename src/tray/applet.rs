@@ -123,9 +123,16 @@ impl Tray for AntigravityTray {
                     activate: Box::new(move |_| {
                         let target = email_capture.clone();
                         tokio::spawn(async move {
-                            let (ok, msg) =
-                                crate::balancer::switcher::switch_to_account(&target, true, "both")
-                                    .await;
+                            let (ok, msg) = match crate::balancer::switcher::switch_to_account(
+                                &target,
+                                true,
+                                crate::balancer::switcher::SwitchSurface::Both,
+                            )
+                            .await
+                            {
+                                Ok(m) => (true, m),
+                                Err(e) => (false, e.to_string()),
+                            };
                             let title = if ok {
                                 "✓ Account Switched"
                             } else {
@@ -221,9 +228,16 @@ impl Tray for AntigravityTray {
                     activate: Box::new(move |_| {
                         let target = cand.clone();
                         tokio::spawn(async move {
-                            let (ok, msg) =
-                                crate::balancer::switcher::switch_to_account(&target, true, "both")
-                                    .await;
+                            let (ok, msg) = match crate::balancer::switcher::switch_to_account(
+                                &target,
+                                true,
+                                crate::balancer::switcher::SwitchSurface::Both,
+                            )
+                            .await
+                            {
+                                Ok(m) => (true, m),
+                                Err(e) => (false, e.to_string()),
+                            };
                             let title = if ok {
                                 "✓ Account Switched"
                             } else {

@@ -678,30 +678,72 @@ pub fn restart_antigravity() -> bool {
     launch_antigravity()
 }
 
-pub async fn switch_to_account(target_email: &str, restart: bool, surface: &str) -> (bool, String) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SwitchSurface {
+    #[default]
+    Both,
+    Desktop,
+    Ide,
+}
+
+impl std::fmt::Display for SwitchSurface {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Both => write!(f, "both"),
+            Self::Desktop => write!(f, "desktop"),
+            Self::Ide => write!(f, "ide"),
+        }
+    }
+}
+
+impl std::str::FromStr for SwitchSurface {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_lowercase().as_str() {
+            "both" | "all" => Ok(Self::Both),
+            "desktop" | "app" => Ok(Self::Desktop),
+            "ide" => Ok(Self::Ide),
+            other => Err(format!(
+                "unknown switch surface: '{other}', expected 'both', 'desktop', or 'ide'"
+            )),
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum SwitchError {
+    #[error("Account not found: {0}")]
+    AccountNotFound(String),
+    #[error("Failed to update credentials: {0}")]
+    UpdateFailed(String),
+    #[error("I/O error during session switch: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+pub async fn switch_to_account(
+    target_email: &str,
+    restart: bool,
+    surface: SwitchSurface,
+) -> Result<String, SwitchError> {
     let clean = target_email.trim().to_lowercase();
-    let mut reg = match load_accounts() {
-        Ok(r) => r,
-        Err(e) => return (false, format!("Failed to load accounts: {e}")),
-    };
+    let mut reg = load_accounts()
+        .map_err(|e| SwitchError::UpdateFailed(format!("Failed to load accounts: {e}")))?;
 
     let current_active = reg.active_email.clone();
     if let Some(ref curr) = current_active {
         if curr.eq_ignore_ascii_case(&clean) {
-            return (
-                true,
-                format!("Account '{clean}' is already the active session."),
-            );
+            return Ok(format!("Account '{clean}' is already the active session."));
         }
         // Snapshot current
         let _ = snapshot_account(curr).await;
     }
 
     if !has_account_credentials(&clean, Some(&reg)) {
-        return (
-            false,
-            format!("No saved session or refresh token found for '{clean}'."),
-        );
+        return Err(SwitchError::AccountNotFound(format!(
+            "No saved session or refresh token found for '{clean}'."
+        )));
     }
 
     let running = is_antigravity_running();
@@ -709,8 +751,8 @@ pub async fn switch_to_account(target_email: &str, restart: bool, surface: &str)
         let _ = tokio::task::spawn_blocking(stop_antigravity).await;
     }
 
-    let do_desktop = surface == "both" || surface == "desktop" || surface == "app";
-    let do_ide = surface == "both" || surface == "ide";
+    let do_desktop = matches!(surface, SwitchSurface::Both | SwitchSurface::Desktop);
+    let do_ide = matches!(surface, SwitchSurface::Both | SwitchSurface::Ide);
 
     let mut restored_desktop = false;
     let mut restored_ide = false;
@@ -743,16 +785,16 @@ pub async fn switch_to_account(target_email: &str, restart: bool, surface: &str)
             }
         }
     }
-    let _ = save_accounts(&reg);
+    save_accounts(&reg)
+        .map_err(|e| SwitchError::UpdateFailed(format!("Failed to save accounts: {e}")))?;
 
     if restart && running {
         launch_antigravity();
     }
 
-    (
-        true,
-        format!("Successfully switched active session to '{clean}'."),
-    )
+    Ok(format!(
+        "Successfully switched active session to '{clean}'."
+    ))
 }
 
 fn copy_dir_recursive(src: &Path, dest: &Path) -> std::io::Result<()> {

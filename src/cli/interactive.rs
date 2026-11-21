@@ -1,4 +1,4 @@
-use crate::balancer::switcher::switch_to_account;
+use crate::balancer::switcher::{SwitchSurface, switch_to_account};
 use crate::storage::models::AccountProfile;
 
 pub async fn run_interactive_switcher(accounts: &[AccountProfile]) -> Result<(), String> {
@@ -22,11 +22,11 @@ pub async fn run_interactive_switcher(accounts: &[AccountProfile]) -> Result<(),
         .map_err(|e| format!("Selection cancelled: {e}"))?;
 
     let email = ans.split_whitespace().next().unwrap_or_default();
-    let (success, msg) = switch_to_account(email, true, "both").await;
-    if success {
-        println!("✓ {msg}");
-        Ok(())
-    } else {
-        Err(msg)
+    match switch_to_account(email, true, SwitchSurface::Both).await {
+        Ok(msg) => {
+            println!("✓ {msg}");
+            Ok(())
+        }
+        Err(err) => Err(err.to_string()),
     }
 }

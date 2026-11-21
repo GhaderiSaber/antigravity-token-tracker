@@ -1,6 +1,6 @@
 use super::models::{FailoverDecision, FailoverEvent, FailoverState};
 use super::notifier::send_desktop_notification;
-use crate::balancer::{has_account_credentials, switch_to_account};
+use crate::balancer::{SwitchSurface, has_account_credentials, switch_to_account};
 use crate::quota::AccountQuotaResult;
 use crate::storage::load_accounts;
 use std::collections::{HashMap, HashSet};
@@ -270,61 +270,66 @@ pub async fn evaluate_and_execute_failover(
         "critical",
     ).await;
 
-    let (success, switch_msg) = switch_to_account(&target_email, restart, "both").await;
-    if success {
-        state.last_failover_timestamp = Some(now);
-        state.last_from_email = Some(active_email.clone());
-        state.last_to_email = Some(target_email.clone());
-        state.history.push(FailoverEvent {
-            timestamp: now,
-            from: active_email.clone(),
-            to: target_email.clone(),
-            from_pct: active_pct,
-            to_pct: target_pct,
-            reason: format!("Primary quota reached {active_pct:.1}%"),
-        });
-        if state.history.len() > 50 {
-            let start = state.history.len() - 50;
-            state.history.drain(0..start);
+    match switch_to_account(&target_email, restart, SwitchSurface::Both).await {
+        Ok(_switch_msg) => {
+            state.last_failover_timestamp = Some(now);
+            state.last_from_email = Some(active_email.clone());
+            state.last_to_email = Some(target_email.clone());
+            state.history.push(FailoverEvent {
+                timestamp: now,
+                from: active_email.clone(),
+                to: target_email.clone(),
+                from_pct: active_pct,
+                to_pct: target_pct,
+                reason: format!("Primary quota reached {active_pct:.1}%"),
+            });
+            if state.history.len() > 50 {
+                let start = state.history.len() - 50;
+                state.history.drain(0..start);
+            }
+            let _ = save_failover_state(&state);
+
+            let _ = send_desktop_notification(
+                "✓ Antigravity Failover Complete",
+                &format!(
+                    "Switched to backup account '{target_email}' ({target_pct:.1}% quota available)."
+                ),
+                "normal",
+            )
+            .await;
+
+            FailoverDecision {
+                triggered: true,
+                reason: "SUCCESS".into(),
+                message: format!(
+                    "Successfully failed over to '{target_email}' ({target_pct:.1}%)."
+                ),
+                dry_run: Some(false),
+                from_account: Some(active_email),
+                to_account: Some(target_email),
+                to_quota_pct: Some(target_pct),
+                error: None,
+            }
         }
-        let _ = save_failover_state(&state);
+        Err(err) => {
+            let switch_msg = err.to_string();
+            let _ = send_desktop_notification(
+                "❌ Failover Switch Failed",
+                &format!("Failed switching to '{target_email}': {switch_msg}"),
+                "critical",
+            )
+            .await;
 
-        let _ = send_desktop_notification(
-            "✓ Antigravity Failover Complete",
-            &format!(
-                "Switched to backup account '{target_email}' ({target_pct:.1}% quota available)."
-            ),
-            "normal",
-        )
-        .await;
-
-        FailoverDecision {
-            triggered: true,
-            reason: "SUCCESS".into(),
-            message: format!("Successfully failed over to '{target_email}' ({target_pct:.1}%)."),
-            dry_run: Some(false),
-            from_account: Some(active_email),
-            to_account: Some(target_email),
-            to_quota_pct: Some(target_pct),
-            error: None,
-        }
-    } else {
-        let _ = send_desktop_notification(
-            "❌ Failover Switch Failed",
-            &format!("Failed switching to '{target_email}': {switch_msg}"),
-            "critical",
-        )
-        .await;
-
-        FailoverDecision {
-            triggered: false,
-            reason: "SWITCH_FAILED".into(),
-            message: format!("Failover switch to '{target_email}' failed: {switch_msg}"),
-            dry_run: Some(false),
-            from_account: Some(active_email),
-            to_account: Some(target_email),
-            to_quota_pct: Some(target_pct),
-            error: Some(switch_msg),
+            FailoverDecision {
+                triggered: false,
+                reason: "SWITCH_FAILED".into(),
+                message: format!("Failover switch to '{target_email}' failed: {switch_msg}"),
+                dry_run: Some(false),
+                from_account: Some(active_email),
+                to_account: Some(target_email),
+                to_quota_pct: Some(target_pct),
+                error: Some(switch_msg),
+            }
         }
     }
 }

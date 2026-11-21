@@ -3,7 +3,7 @@ use crate::balancer::balancer::{
     load_balancer_state, save_balancer_config,
 };
 use crate::balancer::models::BalancerStrategy;
-use crate::balancer::switcher::switch_to_account;
+use crate::balancer::switcher::{SwitchSurface, switch_to_account};
 use crate::daemon::doctor::run_doctor_suite;
 use crate::daemon::failover::{get_active_sessions, get_failover_status};
 use crate::quota::burnrate::{calculate_pool_burnrates, load_snapshots};
@@ -348,10 +348,21 @@ async fn switch_handler(
     let email = query_params
         .email
         .or_else(|| body.as_ref().and_then(|b| b.email.clone()));
-    let surface = query_params
+    let surface_str = query_params
         .surface
         .or_else(|| body.as_ref().and_then(|b| b.surface.clone()))
         .unwrap_or_else(|| "both".into());
+
+    let surface: SwitchSurface = match surface_str.parse() {
+        Ok(s) => s,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"success": false, "error": err})),
+            )
+                .into_response();
+        }
+    };
 
     let Some(target_email) = email else {
         return (
@@ -361,23 +372,23 @@ async fn switch_handler(
             .into_response();
     };
 
-    let (success, msg) = switch_to_account(&target_email, true, &surface).await;
-    if success {
-        broadcast_event(
-            "account_switched",
-            json!({"target": target_email, "surface": surface}),
-        );
-        (
-            StatusCode::OK,
-            Json(json!({"success": true, "message": msg})),
-        )
-            .into_response()
-    } else {
-        (
+    match switch_to_account(&target_email, true, surface).await {
+        Ok(msg) => {
+            broadcast_event(
+                "account_switched",
+                json!({"target": target_email, "surface": surface.to_string()}),
+            );
+            (
+                StatusCode::OK,
+                Json(json!({"success": true, "message": msg})),
+            )
+                .into_response()
+        }
+        Err(err) => (
             StatusCode::BAD_REQUEST,
-            Json(json!({"success": false, "error": msg})),
+            Json(json!({"success": false, "error": err.to_string()})),
         )
-            .into_response()
+            .into_response(),
     }
 }
 
@@ -396,23 +407,23 @@ async fn switch_best_handler() -> Response {
             .into_response();
     };
 
-    let (success, msg) = switch_to_account(target, true, "both").await;
-    if success {
-        broadcast_event(
-            "account_switched",
-            json!({"target": target, "surface": "both"}),
-        );
-        (
-            StatusCode::OK,
-            Json(json!({"success": true, "message": msg, "target": target})),
-        )
-            .into_response()
-    } else {
-        (
+    match switch_to_account(target, true, SwitchSurface::Both).await {
+        Ok(msg) => {
+            broadcast_event(
+                "account_switched",
+                json!({"target": target, "surface": "both"}),
+            );
+            (
+                StatusCode::OK,
+                Json(json!({"success": true, "message": msg, "target": target})),
+            )
+                .into_response()
+        }
+        Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"success": false, "error": msg})),
+            Json(json!({"success": false, "error": err.to_string()})),
         )
-            .into_response()
+            .into_response(),
     }
 }
 
@@ -431,34 +442,40 @@ async fn sync_surfaces_handler(Query(params): Query<SyncSurfacesParams>) -> Resp
         }
     }
 
-    let (success, msg) = if (target == "ide" || target == "align_ide")
+    let switch_res = if (target == "ide" || target == "align_ide")
         && let Some(d_acc) = desktop_acc
     {
-        switch_to_account(&d_acc, false, "ide").await
+        Some(switch_to_account(&d_acc, false, SwitchSurface::Ide).await)
     } else if (target == "desktop" || target == "app" || target == "align_desktop")
         && let Some(i_acc) = ide_acc
     {
-        switch_to_account(&i_acc, true, "desktop").await
+        Some(switch_to_account(&i_acc, true, SwitchSurface::Desktop).await)
     } else {
-        (
-            false,
-            "Source session not detected for alignment or invalid target.".into(),
-        )
+        None
     };
 
-    if success {
-        broadcast_event("surfaces_synced", json!({"target": target}));
-        (
-            StatusCode::OK,
-            Json(json!({"success": true, "message": msg})),
-        )
-            .into_response()
-    } else {
-        (
+    match switch_res {
+        Some(Ok(msg)) => {
+            broadcast_event("surfaces_synced", json!({"target": target}));
+            (
+                StatusCode::OK,
+                Json(json!({"success": true, "message": msg})),
+            )
+                .into_response()
+        }
+        Some(Err(err)) => (
             StatusCode::BAD_REQUEST,
-            Json(json!({"success": false, "error": msg})),
+            Json(json!({"success": false, "error": err.to_string()})),
         )
-            .into_response()
+            .into_response(),
+        None => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "success": false,
+                "error": "Source session not detected for alignment or invalid target."
+            })),
+        )
+            .into_response(),
     }
 }
 
