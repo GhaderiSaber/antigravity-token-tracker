@@ -89,3 +89,32 @@ pub async fn run_daemon_step(
 
     (balancer_res.triggered, failover_res.triggered)
 }
+
+pub async fn run_daemon(
+    interval_secs: u64,
+    _auto_switch: bool,
+    mut shutdown: Option<tokio::sync::watch::Receiver<bool>>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let storage = StorageManager::default();
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(interval_secs));
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                let _ = run_daemon_step(&storage, None).await;
+            }
+            _ = async {
+                if let Some(ref mut rx) = shutdown {
+                    if *rx.borrow() {
+                        return;
+                    }
+                    let _ = rx.changed().await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => {
+                break;
+            }
+        }
+    }
+    Ok(())
+}

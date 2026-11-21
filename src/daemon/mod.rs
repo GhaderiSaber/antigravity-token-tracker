@@ -100,4 +100,14 @@ mod tests {
         assert!(content.contains("\"weekly_pct\":65.0"));
         assert!(content.contains("\"5h_pct\":95.0"));
     }
+
+    #[tokio::test]
+    async fn test_run_daemon_loop_and_graceful_shutdown() {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        let handle = tokio::spawn(async move { run_daemon(1, false, Some(rx)).await });
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        tx.send(true).unwrap();
+        let res = handle.await.unwrap();
+        assert!(res.is_ok());
+    }
 }

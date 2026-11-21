@@ -815,7 +815,39 @@ fn run_daemon_doctor(command: &str, _matches: &ArgMatches) -> ExitCode {
     }
 
     if command == "daemon" {
+        let mut interval_secs = 60u64;
+        let mut auto_switch = false;
+        let mut i = 0;
+        while i < argv.len() {
+            if argv[i] == "--interval" && i + 1 < argv.len() {
+                if let Some(val) = argv[i + 1].to_str().and_then(|s| s.parse::<u64>().ok()) {
+                    interval_secs = val;
+                }
+                i += 1;
+            } else if let Some(arg_str) = argv[i].to_str() {
+                if let Some(val_str) = arg_str.strip_prefix("--interval=") {
+                    if let Ok(val) = val_str.parse::<u64>() {
+                        interval_secs = val;
+                    }
+                } else if arg_str == "--auto-switch" {
+                    auto_switch = true;
+                }
+            }
+            i += 1;
+        }
+
         println!("Antigravity Token Tracker Daemon started.");
+        let Ok(rt) = tokio::runtime::Runtime::new() else {
+            return ExitCode::from(1);
+        };
+        let _ = rt.block_on(async {
+            let (tx, rx) = tokio::sync::watch::channel(false);
+            tokio::spawn(async move {
+                let _ = tokio::signal::ctrl_c().await;
+                let _ = tx.send(true);
+            });
+            tracker_lib::daemon::run_daemon(interval_secs, auto_switch, Some(rx)).await
+        });
         return ExitCode::SUCCESS;
     }
 
