@@ -106,7 +106,7 @@ pub fn get_account_reset_seconds(account_data: &AccountQuotaResult) -> i64 {
             return secs as i64;
         }
     }
-    604800
+    604_800
 }
 
 pub fn get_eligible_pool_accounts(

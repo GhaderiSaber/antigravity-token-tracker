@@ -17,7 +17,7 @@ fn report_fallbacks() {
 
 fn print_root_help() {
     print!(
-        r#"usage: agy-token [-h]
+        r"usage: agy-token [-h]
                  {{status,shield,ip,watch,check,sync,snapshot,save,list,remove,daemon,web,tray,switch,doctor,balance,pace,burn,test-notify,notify-test,test-toast}} ...
 
 Antigravity Account Token & Quota Lifecycle Tracker
@@ -53,7 +53,7 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
-"#
+"
     );
 }
 
@@ -163,11 +163,11 @@ fn dispatch(command: &str, matches: &ArgMatches) -> Option<ExitCode> {
 
 fn print_list_help() {
     print!(
-        r#"usage: agy-token list [-h]
+        r"usage: agy-token list [-h]
 
 options:
   -h, --help  show this help message and exit
-"#
+"
     );
 }
 
@@ -248,7 +248,7 @@ fn run_list(command: &str, _matches: &ArgMatches) -> ExitCode {
 
 fn print_shield_help() {
     print!(
-        r#"usage: agy-token shield [-h] [--mode {{restricted,whitelist}}]
+        r"usage: agy-token shield [-h] [--mode {{restricted,whitelist}}]
                         [--allow COUNTRIES]
                         [--action {{kill_process,kill_network,both}}]
                         [{{status,on,enable,off,disable,mode,allow,action,trigger}}]
@@ -266,7 +266,7 @@ options:
   --allow COUNTRIES     Comma-separated country codes (e.g. US,DE,GB)
   --action {{kill_process,kill_network,both}}
                         Action on violation
-"#
+"
     );
 }
 
@@ -470,11 +470,11 @@ fn run_shield(command: &str, _matches: &ArgMatches) -> ExitCode {
 
 fn print_sync_help() {
     print!(
-        r#"usage: agy-token sync [-h]
+        r"usage: agy-token sync [-h]
 
 options:
   -h, --help  show this help message and exit
-"#
+"
     );
 }
 
@@ -529,24 +529,24 @@ fn run_sync(command: &str, _matches: &ArgMatches) -> ExitCode {
 
 fn print_check_help() {
     print!(
-        r#"usage: agy-token check [-h] [--json] [--force]
+        r"usage: agy-token check [-h] [--json] [--force]
 
 options:
   -h, --help  show this help message and exit
   --json      Output machine-readable JSON
   --force     Bypass local cache
-"#
+"
     );
 }
 
 fn print_pace_help() {
     print!(
-        r#"usage: agy-token pace [-h] [--force]
+        r"usage: agy-token pace [-h] [--force]
 
 options:
   -h, --help  show this help message and exit
   --force     Bypass cache and refresh quotas directly
-"#
+"
     );
 }
 
@@ -657,7 +657,7 @@ fn run_pace_check(command: &str, _matches: &ArgMatches) -> ExitCode {
 
 fn print_balance_help() {
     print!(
-        r#"usage: agy-token balance [-h]
+        r"usage: agy-token balance [-h]
                          [--strategy {{watermark,expiry_first,round_robin,reactive}}]
                          [--spread SPREAD] [--interval INTERVAL]
                          [--expiry-window EXPIRY_WINDOW]
@@ -683,7 +683,7 @@ options:
                         (e.g. 5.0)
   --dry-run             Simulate rotation without executing switch
   --force               Bypass cooldown and balancer enabled check
-"#
+"
     );
 }
 
@@ -750,20 +750,20 @@ fn run_balance(command: &str, _matches: &ArgMatches) -> ExitCode {
 
 fn print_doctor_help() {
     print!(
-        r#"usage: agy-token doctor [-h] [--fix] [--no-network]
+        r"usage: agy-token doctor [-h] [--fix] [--no-network]
 
 options:
   -h, --help    show this help message and exit
   --fix         Automatically repair file permissions, refresh stale tokens,
                 and restart services
   --no-network  Skip remote Google OAuth token validation
-"#
+"
     );
 }
 
 fn print_daemon_help() {
     print!(
-        r#"usage: agy-token daemon [-h] [--interval INTERVAL] [--auto-switch]
+        r"usage: agy-token daemon [-h] [--interval INTERVAL] [--auto-switch]
                         [--threshold THRESHOLD] [--cooldown COOLDOWN]
                         [--no-restart] [--tray]
 
@@ -778,7 +778,7 @@ options:
   --cooldown COOLDOWN   Minimum seconds between auto-failovers (default: 120)
   --no-restart          Swap session without restarting Antigravity
   --tray                Launch top-bar system tray indicator alongside daemon
-"#
+"
     );
 }
 
@@ -856,14 +856,14 @@ fn run_daemon_doctor(command: &str, _matches: &ArgMatches) -> ExitCode {
 
 fn print_web_help() {
     print!(
-        r#"usage: agy-token web [-h] [--port PORT] [--bg]
+        r"usage: agy-token web [-h] [--port PORT] [--bg]
 
 options:
   -h, --help          show this help message and exit
   --port PORT         Port to listen on (default: 8765)
   --bg, --background  Run dashboard in background daemon thread instead of
                       blocking
-"#
+"
     );
 }
 
@@ -905,25 +905,25 @@ fn run_web(command: &str, _matches: &ArgMatches) -> ExitCode {
 
 fn print_status_help() {
     print!(
-        r#"usage: agy-token status [-h] [--models] [--force]
+        r"usage: agy-token status [-h] [--models] [--force]
 
 options:
   -h, --help  show this help message and exit
   --models    Display all individual model quotas
   --force     Bypass local cache and query Google directly
-"#
+"
     );
 }
 
 fn print_ip_help() {
     print!(
-        r#"usage: agy-token ip [-h] [--refresh] [--json]
+        r"usage: agy-token ip [-h] [--refresh] [--json]
 
 options:
   -h, --help  show this help message and exit
   --refresh   Bypass 60s cache and re-query live IP service
   --json      Output machine-readable JSON
-"#
+"
     );
 }
 
@@ -1006,12 +1006,12 @@ fn run_status_ip(command: &str, _matches: &ArgMatches) -> ExitCode {
 
 fn print_tray_help() {
     print!(
-        r#"usage: agy-token tray [-h] [--interval INTERVAL]
+        r"usage: agy-token tray [-h] [--interval INTERVAL]
 
 options:
   -h, --help           show this help message and exit
   --interval INTERVAL  Polling interval in seconds (default: 60)
-"#
+"
     );
 }
 

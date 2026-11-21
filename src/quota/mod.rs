@@ -87,7 +87,7 @@ mod tests {
 
     #[test]
     fn test_burnrate_calculation() {
-        let now_epoch = 1700000000.0;
+        let now_epoch = 1_700_000_000.0;
         let snapshots = vec![
             json!({
                 "timestamp": now_epoch - 3600.0,

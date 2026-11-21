@@ -83,7 +83,7 @@ mod tests {
             email: "active@example.com".into(),
             quota_pct: 35.0,
             is_exhausted: false,
-            reset_seconds: 300000,
+            reset_seconds: 300_000,
             is_active: true,
             is_eligible: true,
         };
@@ -92,7 +92,7 @@ mod tests {
             email: "low@example.com".into(),
             quota_pct: 45.0,
             is_exhausted: false,
-            reset_seconds: 200000,
+            reset_seconds: 200_000,
             is_active: false,
             is_eligible: true,
         };
@@ -101,7 +101,7 @@ mod tests {
             email: "high@example.com".into(),
             quota_pct: 80.0,
             is_exhausted: false,
-            reset_seconds: 400000,
+            reset_seconds: 400_000,
             is_active: false,
             is_eligible: true,
         };
@@ -132,7 +132,7 @@ mod tests {
             email: "active@example.com".into(),
             quota_pct: 50.0,
             is_exhausted: false,
-            reset_seconds: 200000,
+            reset_seconds: 200_000,
             is_active: true,
             is_eligible: true,
         };
@@ -150,7 +150,7 @@ mod tests {
             email: "later@example.com".into(),
             quota_pct: 90.0,
             is_exhausted: false,
-            reset_seconds: 150000,
+            reset_seconds: 150_000,
             is_active: false,
             is_eligible: true,
         };
@@ -174,7 +174,7 @@ mod tests {
             email: "acc1@example.com".into(),
             quota_pct: 60.0,
             is_exhausted: false,
-            reset_seconds: 100000,
+            reset_seconds: 100_000,
             is_active: true,
             is_eligible: true,
         };
@@ -182,7 +182,7 @@ mod tests {
             email: "acc2@example.com".into(),
             quota_pct: 70.0,
             is_exhausted: false,
-            reset_seconds: 100000,
+            reset_seconds: 100_000,
             is_active: false,
             is_eligible: true,
         };
