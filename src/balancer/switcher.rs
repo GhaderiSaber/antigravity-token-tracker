@@ -611,10 +611,10 @@ pub fn stop_antigravity() -> bool {
     if !pids.is_empty() {
         for &p in &pids {
             #[cfg(unix)]
-            // SAFETY: Sending SIGTERM to identified Antigravity process PID.
-            unsafe {
-                libc::kill(p, libc::SIGTERM);
-            }
+            let _ = nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(p),
+                nix::sys::signal::Signal::SIGTERM,
+            );
         }
 
         // Wait up to 4s
@@ -634,10 +634,10 @@ pub fn stop_antigravity() -> bool {
         for &p in &pids {
             if Path::new(&format!("/proc/{p}")).exists() {
                 #[cfg(unix)]
-                // SAFETY: Sending SIGKILL to stubborn Antigravity process PID.
-                unsafe {
-                    libc::kill(p, libc::SIGKILL);
-                }
+                let _ = nix::sys::signal::kill(
+                    nix::unistd::Pid::from_raw(p),
+                    nix::sys::signal::Signal::SIGKILL,
+                );
             }
         }
         std::thread::sleep(Duration::from_millis(500));
@@ -712,7 +712,7 @@ pub async fn switch_to_account(target_email: &str, restart: bool, surface: &str)
 
     let running = is_antigravity_running();
     if restart && running {
-        stop_antigravity();
+        let _ = tokio::task::spawn_blocking(stop_antigravity).await;
     }
 
     let do_desktop = surface == "both" || surface == "desktop" || surface == "app";
