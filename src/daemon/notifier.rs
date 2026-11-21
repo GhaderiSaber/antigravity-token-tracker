@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::process::Command;
+use tokio::process::Command;
 
 pub async fn send_desktop_notification(summary: &str, body: &str, urgency: &str) -> bool {
     if let Ok(connection) = zbus::Connection::session().await
@@ -51,5 +51,6 @@ pub async fn send_desktop_notification(summary: &str, body: &str, urgency: &str)
             body,
         ])
         .output()
+        .await
         .is_ok_and(|o| o.status.success())
 }
