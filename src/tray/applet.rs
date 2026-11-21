@@ -1,3 +1,4 @@
+use crate::balancer::BalancerStrategy;
 use ksni::menu::*;
 use ksni::{Icon, MenuItem, ToolTip, Tray};
 use std::sync::{Arc, Mutex};
@@ -13,7 +14,7 @@ pub struct TrayState {
     pub is_restricted: bool,
     pub is_shield_enabled: bool,
     pub is_balancer_enabled: bool,
-    pub balancer_strategy: String,
+    pub balancer_strategy: BalancerStrategy,
     pub backup_candidate: Option<(String, f64)>,
 }
 

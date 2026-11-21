@@ -97,7 +97,7 @@ pub async fn run_tray(
         is_restricted: geo.is_restricted,
         is_shield_enabled: shield_cfg.enabled,
         is_balancer_enabled: bal_cfg.enabled,
-        balancer_strategy: bal_cfg.strategy.clone(),
+        balancer_strategy: bal_cfg.strategy,
         backup_candidate: None,
     };
 

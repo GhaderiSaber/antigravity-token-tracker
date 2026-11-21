@@ -2,6 +2,7 @@ use crate::balancer::balancer::{
     evaluate_and_execute_balancer, get_eligible_pool_accounts, load_balancer_config,
     load_balancer_state, save_balancer_config,
 };
+use crate::balancer::models::BalancerStrategy;
 use crate::balancer::switcher::switch_to_account;
 use crate::daemon::doctor::run_doctor_suite;
 use crate::daemon::failover::{get_active_sessions, get_failover_status};
@@ -285,8 +286,14 @@ async fn post_balancer_handler(Json(body): Json<serde_json::Value>) -> Json<serd
     if let Some(enabled) = body.get("enabled").and_then(|v| v.as_bool()) {
         cfg.enabled = enabled;
     }
-    if let Some(strat) = body.get("strategy").and_then(|v| v.as_str()) {
-        cfg.strategy = strat.to_string();
+    if let Some(strat_val) = body.get("strategy") {
+        if let Ok(strat) = serde_json::from_value::<BalancerStrategy>(strat_val.clone()) {
+            cfg.strategy = strat;
+        } else if let Some(s) = strat_val.as_str() {
+            if let Ok(strat) = s.parse::<BalancerStrategy>() {
+                cfg.strategy = strat;
+            }
+        }
     }
     if let Some(spread) = body.get("watermark_spread_pct").and_then(|v| v.as_f64()) {
         cfg.watermark_spread_pct = spread;

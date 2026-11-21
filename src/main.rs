@@ -688,7 +688,48 @@ fn run_balance(command: &str, _matches: &ArgMatches) -> ExitCode {
     }
 
     if command == "balance" {
-        let cfg = tracker_lib::balancer::load_balancer_config();
+        let mut cfg = tracker_lib::balancer::load_balancer_config();
+
+        let mut new_strategy = None;
+        let mut i = 0;
+        while i < argv.len() {
+            if (argv[i] == "--strategy" || argv[i] == "strategy") && i + 1 < argv.len() {
+                if let Some(val) = argv[i + 1].to_str() {
+                    new_strategy = Some(val.parse::<tracker_lib::balancer::BalancerStrategy>());
+                }
+                break;
+            }
+            i += 1;
+        }
+
+        if let Some(strat_res) = new_strategy {
+            match strat_res {
+                Ok(strat) => {
+                    cfg.strategy = strat;
+                    let _ = tracker_lib::balancer::save_balancer_config(&cfg);
+                    println!("Auto-Balancer strategy set to: {strat}");
+                    return ExitCode::SUCCESS;
+                }
+                Err(err) => {
+                    eprintln!("{err}");
+                    return ExitCode::from(1);
+                }
+            }
+        }
+
+        if argv.iter().any(|a| a == "on" || a == "enable") {
+            cfg.enabled = true;
+            let _ = tracker_lib::balancer::save_balancer_config(&cfg);
+            println!("Auto-Balancer ENABLED (Strategy: {})", cfg.strategy);
+            return ExitCode::SUCCESS;
+        }
+        if argv.iter().any(|a| a == "off" || a == "disable") {
+            cfg.enabled = false;
+            let _ = tracker_lib::balancer::save_balancer_config(&cfg);
+            println!("Auto-Balancer DISABLED");
+            return ExitCode::SUCCESS;
+        }
+
         let state_str = if cfg.enabled { "ENABLED" } else { "DISABLED" };
         println!(
             "Auto-Balancer is currently {} (Strategy: {}, Spread: {:.1}%)",

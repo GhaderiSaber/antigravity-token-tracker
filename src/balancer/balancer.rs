@@ -1,4 +1,4 @@
-use super::models::{BalancerConfig, BalancerState};
+use super::models::{BalancerConfig, BalancerState, BalancerStrategy};
 use super::switcher::{has_account_credentials, switch_to_account};
 use crate::quota::AccountQuotaResult;
 use crate::storage::load_accounts;
@@ -41,7 +41,7 @@ pub struct BalancerDecision {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dry_run: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub strategy: Option<String>,
+    pub strategy: Option<BalancerStrategy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from_account: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -267,7 +267,7 @@ pub async fn evaluate_and_execute_balancer(
     analyzed_quotas: &HashMap<String, AccountQuotaResult>,
     dry_run: bool,
     force: bool,
-    strategy_override: Option<&str>,
+    strategy_override: Option<BalancerStrategy>,
 ) -> BalancerDecision {
     let cfg = load_balancer_config();
     let mut state = load_balancer_state();
@@ -289,8 +289,8 @@ pub async fn evaluate_and_execute_balancer(
         };
     }
 
-    let strategy = strategy_override.unwrap_or(&cfg.strategy).to_string();
-    if strategy == "reactive" {
+    let strategy = strategy_override.unwrap_or(cfg.strategy);
+    if strategy == BalancerStrategy::Reactive {
         return BalancerDecision {
             triggered: false,
             reason: "STRATEGY_REACTIVE".into(),
@@ -358,24 +358,24 @@ pub async fn evaluate_and_execute_balancer(
         .cloned()
         .collect();
 
-    let rotation_decision = match strategy.as_str() {
-        "watermark" => {
+    let rotation_decision = match strategy {
+        BalancerStrategy::Watermark => {
             evaluate_watermark_strategy(active_acc, &candidates, cfg.watermark_spread_pct)
         }
-        "expiry_first" => evaluate_expiry_first_strategy(
+        BalancerStrategy::ExpiryFirst => evaluate_expiry_first_strategy(
             active_acc,
             &candidates,
             cfg.expiry_window_hours,
             cfg.min_quota_pct,
         ),
-        "round_robin" => evaluate_round_robin_strategy(
+        BalancerStrategy::RoundRobin => evaluate_round_robin_strategy(
             active_acc,
             &pool,
             cfg.round_robin_interval_minutes,
             last_ts,
             now,
         ),
-        _ => evaluate_watermark_strategy(active_acc, &candidates, cfg.watermark_spread_pct),
+        BalancerStrategy::Reactive => None,
     };
 
     let Some((target_acc, reason_msg)) = rotation_decision else {

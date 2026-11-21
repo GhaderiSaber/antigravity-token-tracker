@@ -17,13 +17,64 @@ mod tests {
     fn test_balancer_config_defaults() {
         let cfg = BalancerConfig::default();
         assert!(!cfg.enabled);
-        assert_eq!(cfg.strategy, "watermark");
+        assert_eq!(cfg.strategy, BalancerStrategy::Watermark);
         assert_eq!(cfg.watermark_spread_pct, 20.0);
         assert_eq!(cfg.round_robin_interval_minutes, 60);
         assert_eq!(cfg.expiry_window_hours, 36);
         assert_eq!(cfg.min_quota_pct, 5.0);
         assert_eq!(cfg.cooldown_seconds, 300);
         assert!(cfg.auto_restart);
+    }
+
+    #[test]
+    fn test_balancer_strategy_display_and_from_str() {
+        let strategies = [
+            (BalancerStrategy::Watermark, "watermark"),
+            (BalancerStrategy::ExpiryFirst, "expiry_first"),
+            (BalancerStrategy::RoundRobin, "round_robin"),
+            (BalancerStrategy::Reactive, "reactive"),
+        ];
+
+        for (variant, name) in strategies {
+            assert_eq!(variant.to_string(), name);
+            assert_eq!(name.parse::<BalancerStrategy>().unwrap(), variant);
+        }
+
+        // Aliases / case-insensitive
+        assert_eq!(
+            "expiry".parse::<BalancerStrategy>().unwrap(),
+            BalancerStrategy::ExpiryFirst
+        );
+        assert_eq!(
+            "roundrobin".parse::<BalancerStrategy>().unwrap(),
+            BalancerStrategy::RoundRobin
+        );
+        assert_eq!(
+            "WATERMARK".parse::<BalancerStrategy>().unwrap(),
+            BalancerStrategy::Watermark
+        );
+        assert_eq!(
+            "expiry-first".parse::<BalancerStrategy>().unwrap(),
+            BalancerStrategy::ExpiryFirst
+        );
+
+        // Invalid strategy
+        assert!("invalid_strat".parse::<BalancerStrategy>().is_err());
+    }
+
+    #[test]
+    fn test_balancer_strategy_serde() {
+        let serialized = serde_json::to_string(&BalancerStrategy::ExpiryFirst).unwrap();
+        assert_eq!(serialized, "\"expiry_first\"");
+
+        let deserialized: BalancerStrategy = serde_json::from_str("\"round_robin\"").unwrap();
+        assert_eq!(deserialized, BalancerStrategy::RoundRobin);
+
+        // Config JSON round-trip
+        let json = r#"{"enabled":true,"strategy":"reactive"}"#;
+        let cfg: BalancerConfig = serde_json::from_str(json).unwrap();
+        assert!(cfg.enabled);
+        assert_eq!(cfg.strategy, BalancerStrategy::Reactive);
     }
 
     #[test]

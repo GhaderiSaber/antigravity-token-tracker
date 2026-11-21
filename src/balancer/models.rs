@@ -1,11 +1,48 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BalancerStrategy {
+    #[default]
+    Watermark,
+    ExpiryFirst,
+    RoundRobin,
+    Reactive,
+}
+
+impl std::fmt::Display for BalancerStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Watermark => write!(f, "watermark"),
+            Self::ExpiryFirst => write!(f, "expiry_first"),
+            Self::RoundRobin => write!(f, "round_robin"),
+            Self::Reactive => write!(f, "reactive"),
+        }
+    }
+}
+
+impl std::str::FromStr for BalancerStrategy {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().replace('-', "_").as_str() {
+            "watermark" => Ok(Self::Watermark),
+            "expiry_first" | "expiry" => Ok(Self::ExpiryFirst),
+            "round_robin" | "roundrobin" => Ok(Self::RoundRobin),
+            "reactive" => Ok(Self::Reactive),
+            _ => Err(format!(
+                "Invalid balancer strategy: '{s}'. Valid strategies are: watermark, expiry_first, round_robin, reactive"
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BalancerConfig {
     #[serde(default)]
     pub enabled: bool,
-    #[serde(default = "default_strategy")]
-    pub strategy: String,
+    #[serde(default)]
+    pub strategy: BalancerStrategy,
     #[serde(default = "default_watermark_spread")]
     pub watermark_spread_pct: f64,
     #[serde(default = "default_round_robin_interval")]
@@ -20,9 +57,6 @@ pub struct BalancerConfig {
     pub auto_restart: bool,
 }
 
-fn default_strategy() -> String {
-    "watermark".to_string()
-}
 fn default_watermark_spread() -> f64 {
     20.0
 }
@@ -46,7 +80,7 @@ impl Default for BalancerConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            strategy: default_strategy(),
+            strategy: BalancerStrategy::default(),
             watermark_spread_pct: default_watermark_spread(),
             round_robin_interval_minutes: default_round_robin_interval(),
             expiry_window_hours: default_expiry_window(),
