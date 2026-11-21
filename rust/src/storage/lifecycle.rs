@@ -125,11 +125,9 @@ pub fn analyze_account_lifecycle(quota: &QuotaSnapshot, now: DateTime<Utc>) -> Q
         });
 
         let analyzed_5h = group.five_hour.as_ref().map(|five_hour| {
-            let frac = five_hour.remaining_fraction.unwrap_or_else(|| {
-                five_hour
-                    .remaining_percent
-                    .map_or(0.0, |p| p / 100.0)
-            });
+            let frac = five_hour
+                .remaining_fraction
+                .unwrap_or_else(|| five_hour.remaining_percent.map_or(0.0, |p| p / 100.0));
             let (cd_str, secs) =
                 format_countdown(five_hour.reset_time.as_deref().unwrap_or(""), now);
             let badge = get_status_badge(frac);
@@ -224,7 +222,7 @@ pub fn compute_switching_recommendation(
         }
     }
 
-    healthy_accs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    healthy_accs.sort_by(|a, b| b.1.total_cmp(&a.1));
 
     // Case 1: Active desktop account is exhausted
     if let Some(active_email) = active_desktop_email
