@@ -324,7 +324,7 @@ pub async fn fetch_account_quota(
         }
     }
 
-    if quota_summary_data.is_none() {
+    let Some(summary_val) = quota_summary_data else {
         // Fallback to persistent last-known quota if available
         let mut last_known = account.last_known_quota.clone();
         if last_known.as_ref().is_none_or(|k| k.groups.is_empty())
@@ -368,9 +368,8 @@ pub async fn fetch_account_quota(
             is_cached: false,
             error: Some("Account session inactive. Log into Antigravity to refresh quota.".into()),
         };
-    }
+    };
 
-    let summary_val = quota_summary_data.unwrap();
     let parsed_groups = parse_quota_summary(&summary_val);
     let parsed_models = models_data
         .as_ref()
