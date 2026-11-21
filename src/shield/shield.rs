@@ -1,5 +1,5 @@
 use crate::shield::geo::{get_ip_geo, is_restricted_country, now_epoch};
-use crate::shield::models::{EgressGeo, ShieldConfig, ShieldEvaluation};
+use crate::shield::models::{EgressGeo, ShieldAction, ShieldConfig, ShieldEvaluation, ShieldMode};
 use nix::sys::signal::{Signal, kill};
 use nix::unistd::Pid;
 use std::fs::{self, File};
@@ -157,39 +157,40 @@ pub fn is_ip_allowed(geo_info: &EgressGeo, cfg: &ShieldConfig) -> (bool, String)
         return (true, "IP detection pending or offline".to_string());
     }
 
-    if cfg.mode == "restricted" {
-        if geo_info.is_restricted || is_restricted_country(&country_code) {
-            return (
-                false,
-                format!(
-                    "Egress IP {ip} is located in restricted region: {country_name} ({country_code})"
-                ),
-            );
+    match cfg.mode {
+        ShieldMode::Restricted => {
+            if geo_info.is_restricted || is_restricted_country(&country_code) {
+                return (
+                    false,
+                    format!(
+                        "Egress IP {ip} is located in restricted region: {country_name} ({country_code})"
+                    ),
+                );
+            }
+            (true, format!("Country {country_code} is safe"))
         }
-        (true, format!("Country {country_code} is safe"))
-    } else if cfg.mode == "whitelist" {
-        let allowed: Vec<String> = cfg
-            .allowed_countries
-            .iter()
-            .map(|c| c.trim().to_uppercase())
-            .collect();
-        if !allowed.contains(&country_code) {
-            return (
-                false,
-                format!(
-                    "Country {} ({}) is outside allowed whitelist: {}",
-                    country_code,
-                    country_name,
-                    allowed.join(", ")
-                ),
-            );
+        ShieldMode::Whitelist => {
+            let allowed: Vec<String> = cfg
+                .allowed_countries
+                .iter()
+                .map(|c| c.trim().to_uppercase())
+                .collect();
+            if !allowed.contains(&country_code) {
+                return (
+                    false,
+                    format!(
+                        "Country {} ({}) is outside allowed whitelist: {}",
+                        country_code,
+                        country_name,
+                        allowed.join(", ")
+                    ),
+                );
+            }
+            (
+                true,
+                format!("Country {country_code} is in allowed whitelist"),
+            )
         }
-        (
-            true,
-            format!("Country {country_code} is in allowed whitelist"),
-        )
-    } else {
-        (true, "Policy check passed".to_string())
     }
 }
 
@@ -231,11 +232,12 @@ pub async fn evaluate_and_enforce_shield(
     if !allowed {
         WAS_VIOLATING.store(true, Ordering::SeqCst);
 
-        let (killed_count, killed_pids) = if cfg.action == "kill_process" || cfg.action == "both" {
-            kill_antigravity_processes(true)
-        } else {
-            (0, Vec::new())
-        };
+        let (killed_count, killed_pids) =
+            if matches!(cfg.action, ShieldAction::KillProcess | ShieldAction::Both) {
+                kill_antigravity_processes(true)
+            } else {
+                (0, Vec::new())
+            };
 
         let last_trigger = f64::from_bits(LAST_TRIGGER_TIMESTAMP_BITS.load(Ordering::Relaxed));
         if (now - last_trigger) > cfg.cooldown_seconds as f64 {
@@ -247,7 +249,7 @@ pub async fn evaluate_and_enforce_shield(
             violation: true,
             message: None,
             reason: Some(reason),
-            action_taken: Some(cfg.action.clone()),
+            action_taken: Some(cfg.action.to_string()),
             processes_killed: Some(killed_count),
             pids_killed: Some(killed_pids),
             network_killed: Some(false),

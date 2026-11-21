@@ -44,16 +44,84 @@ impl Default for EgressGeo {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+use std::fmt;
+use std::str::FromStr;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ShieldMode {
+    #[default]
+    Restricted,
+    Whitelist,
+}
+
+impl fmt::Display for ShieldMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Restricted => write!(f, "restricted"),
+            Self::Whitelist => write!(f, "whitelist"),
+        }
+    }
+}
+
+impl FromStr for ShieldMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_lowercase().as_str() {
+            "restricted" => Ok(Self::Restricted),
+            "whitelist" | "white_list" | "white-list" => Ok(Self::Whitelist),
+            other => Err(format!(
+                "unknown shield mode: '{other}', expected 'restricted' or 'whitelist'"
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ShieldAction {
+    #[default]
+    KillProcess,
+    KillNetwork,
+    Both,
+}
+
+impl fmt::Display for ShieldAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::KillProcess => write!(f, "kill_process"),
+            Self::KillNetwork => write!(f, "kill_network"),
+            Self::Both => write!(f, "both"),
+        }
+    }
+}
+
+impl FromStr for ShieldAction {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_lowercase().as_str() {
+            "kill_process" | "kill-process" | "killprocess" => Ok(Self::KillProcess),
+            "kill_network" | "kill-network" | "killnetwork" => Ok(Self::KillNetwork),
+            "both" => Ok(Self::Both),
+            other => Err(format!(
+                "unknown shield action: '{other}', expected 'kill_process', 'kill_network', or 'both'"
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShieldConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
-    #[serde(default = "default_mode")]
-    pub mode: String, // "restricted" or "whitelist"
+    #[serde(default)]
+    pub mode: ShieldMode,
     #[serde(default = "default_allowed_countries")]
     pub allowed_countries: Vec<String>,
-    #[serde(default = "default_action")]
-    pub action: String, // "kill_process", "kill_network", or "both"
+    #[serde(default)]
+    pub action: ShieldAction,
     #[serde(default)]
     pub auto_relaunch: bool,
     #[serde(default = "default_cooldown")]
@@ -62,14 +130,6 @@ pub struct ShieldConfig {
 
 fn default_true() -> bool {
     true
-}
-
-fn default_mode() -> String {
-    "restricted".into()
-}
-
-fn default_action() -> String {
-    "kill_process".into()
 }
 
 fn default_cooldown() -> u64 {
@@ -93,9 +153,9 @@ impl Default for ShieldConfig {
     fn default() -> Self {
         Self {
             enabled: default_true(),
-            mode: default_mode(),
+            mode: ShieldMode::default(),
             allowed_countries: default_allowed_countries(),
-            action: default_action(),
+            action: ShieldAction::default(),
             auto_relaunch: false,
             cooldown_seconds: default_cooldown(),
         }

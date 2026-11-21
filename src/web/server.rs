@@ -9,6 +9,7 @@ use crate::daemon::failover::{get_active_sessions, get_failover_status};
 use crate::quota::burnrate::{calculate_pool_burnrates, load_snapshots};
 use crate::quota::quota::fetch_all_accounts_quota;
 use crate::shield::geo::get_ip_geo;
+use crate::shield::models::{ShieldAction, ShieldMode};
 use crate::shield::shield::{
     is_ip_allowed, load_shield_config, save_shield_config, set_shield_enabled,
 };
@@ -239,8 +240,12 @@ async fn post_shield_handler(Json(body): Json<serde_json::Value>) -> Json<serde_
         cfg.enabled = enabled;
         let _ = set_shield_enabled(&config_dir, enabled);
     }
-    if let Some(mode) = body.get("mode").and_then(|v| v.as_str()) {
-        cfg.mode = mode.to_string();
+    if let Some(mode) = body
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse::<ShieldMode>().ok())
+    {
+        cfg.mode = mode;
     }
     if let Some(allowed) = body.get("allowed_countries").and_then(|v| v.as_array()) {
         cfg.allowed_countries = allowed
@@ -248,8 +253,12 @@ async fn post_shield_handler(Json(body): Json<serde_json::Value>) -> Json<serde_
             .filter_map(|c| c.as_str().map(std::string::ToString::to_string))
             .collect();
     }
-    if let Some(action) = body.get("action").and_then(|v| v.as_str()) {
-        cfg.action = action.to_string();
+    if let Some(action) = body
+        .get("action")
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse::<ShieldAction>().ok())
+    {
+        cfg.action = action;
     }
     let _ = save_shield_config(&config_dir, &cfg);
 

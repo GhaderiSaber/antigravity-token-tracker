@@ -13,6 +13,50 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
+    fn test_shield_enums_serde_and_from_str() {
+        let mode: ShieldMode = serde_json::from_str("\"whitelist\"").unwrap();
+        assert_eq!(mode, ShieldMode::Whitelist);
+        assert_eq!(serde_json::to_string(&mode).unwrap(), "\"whitelist\"");
+
+        let mode_re: ShieldMode = serde_json::from_str("\"restricted\"").unwrap();
+        assert_eq!(mode_re, ShieldMode::Restricted);
+        assert_eq!(serde_json::to_string(&mode_re).unwrap(), "\"restricted\"");
+
+        let action: ShieldAction = serde_json::from_str("\"kill_process\"").unwrap();
+        assert_eq!(action, ShieldAction::KillProcess);
+        assert_eq!(action.to_string(), "kill_process");
+
+        assert_eq!(
+            "kill_network".parse::<ShieldAction>().unwrap(),
+            ShieldAction::KillNetwork
+        );
+        assert_eq!("both".parse::<ShieldAction>().unwrap(), ShieldAction::Both);
+        assert_eq!(
+            "KILL_PROCESS".parse::<ShieldAction>().unwrap(),
+            ShieldAction::KillProcess
+        );
+        assert_eq!(
+            "Kill_Network".parse::<ShieldAction>().unwrap(),
+            ShieldAction::KillNetwork
+        );
+        assert_eq!(
+            "restricted".parse::<ShieldMode>().unwrap(),
+            ShieldMode::Restricted
+        );
+        assert_eq!(
+            "WHITELIST".parse::<ShieldMode>().unwrap(),
+            ShieldMode::Whitelist
+        );
+        assert_eq!(
+            "  whitelist  ".parse::<ShieldMode>().unwrap(),
+            ShieldMode::Whitelist
+        );
+
+        assert!("invalid_mode".parse::<ShieldMode>().is_err());
+        assert!("invalid_action".parse::<ShieldAction>().is_err());
+    }
+
+    #[test]
     fn test_flag_emoji_and_restricted() {
         assert_eq!(get_flag_emoji("US"), "🇺🇸");
         assert_eq!(get_flag_emoji("de"), "🇩🇪");
@@ -44,7 +88,7 @@ mod tests {
     fn test_shield_policy_restricted_and_whitelist() {
         let mut cfg = ShieldConfig {
             enabled: true,
-            mode: "restricted".into(),
+            mode: ShieldMode::Restricted,
             ..Default::default()
         };
 
@@ -70,7 +114,7 @@ mod tests {
         assert!(reason.contains("restricted region"));
 
         // Switch to whitelist mode
-        cfg.mode = "whitelist".into();
+        cfg.mode = ShieldMode::Whitelist;
         cfg.allowed_countries = vec!["DE".into(), "NL".into()];
 
         let (allowed_wl, _) = is_ip_allowed(
@@ -101,7 +145,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let loaded_def = load_shield_config(dir.path());
         assert!(loaded_def.enabled);
-        assert_eq!(loaded_def.mode, "restricted");
+        assert_eq!(loaded_def.mode, ShieldMode::Restricted);
 
         let updated = set_shield_enabled(dir.path(), false).unwrap();
         assert!(!updated.enabled);

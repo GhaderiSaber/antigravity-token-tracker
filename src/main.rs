@@ -2,6 +2,7 @@ use std::ffi::OsString;
 use std::process::ExitCode;
 
 use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
+use tracker_lib::shield::models::{ShieldAction, ShieldMode};
 
 const ROOT: &str = "run_tracker";
 
@@ -348,15 +349,18 @@ fn run_shield(command: &str, _matches: &ArgMatches) -> ExitCode {
             }
             "mode" => {
                 let target = extra_args.get(1).map_or("", String::as_str);
-                if target != "restricted" && target != "whitelist" {
-                    println!(
-                        "Invalid mode. Specify: `agy-token shield mode restricted` or `agy-token shield mode whitelist`."
-                    );
-                    return ExitCode::from(1);
-                }
-                cfg.mode = target.to_string();
+                let mode: ShieldMode = match target.parse() {
+                    Ok(m) => m,
+                    Err(_) => {
+                        println!(
+                            "Invalid mode. Specify: `agy-token shield mode restricted` or `agy-token shield mode whitelist`."
+                        );
+                        return ExitCode::from(1);
+                    }
+                };
+                cfg.mode = mode;
                 let _ = tracker_lib::shield::save_shield_config(config_dir, &cfg);
-                println!("✓ Shield mode set to: {target}\n");
+                println!("✓ Shield mode set to: {mode}\n");
                 return ExitCode::SUCCESS;
             }
             "allow" => {
@@ -380,13 +384,18 @@ fn run_shield(command: &str, _matches: &ArgMatches) -> ExitCode {
             }
             "action" => {
                 let act = extra_args.get(1).map_or("", String::as_str);
-                if act != "kill_process" && act != "kill_network" && act != "both" {
-                    println!("Invalid action. Choose 'kill_process', 'kill_network', or 'both'.");
-                    return ExitCode::from(1);
-                }
-                cfg.action = act.to_string();
+                let action: ShieldAction = match act.parse() {
+                    Ok(a) => a,
+                    Err(_) => {
+                        println!(
+                            "Invalid action. Choose 'kill_process', 'kill_network', or 'both'."
+                        );
+                        return ExitCode::from(1);
+                    }
+                };
+                cfg.action = action;
                 let _ = tracker_lib::shield::save_shield_config(config_dir, &cfg);
-                println!("✓ Shield enforcement action set to: {act}\n");
+                println!("✓ Shield enforcement action set to: {action}\n");
                 return ExitCode::SUCCESS;
             }
             "trigger" => {
@@ -408,12 +417,11 @@ fn run_shield(command: &str, _matches: &ArgMatches) -> ExitCode {
                 } else {
                     "○ DISABLED (Protection OFF)"
                 };
-                let mode_str = if cfg.mode == "whitelist" {
-                    "Whitelist"
-                } else {
-                    "Restricted"
+                let mode_str = match cfg.mode {
+                    ShieldMode::Whitelist => "Whitelist",
+                    ShieldMode::Restricted => "Restricted",
                 };
-                let action_val = &cfg.action;
+                let action_val = cfg.action.to_string();
                 let whitelist_str = cfg.allowed_countries.join(", ");
                 let relaunch_str = if cfg.auto_relaunch { "Yes" } else { "No" };
                 let current_ip = format!(
