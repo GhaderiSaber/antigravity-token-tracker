@@ -156,8 +156,10 @@ mod tests {
 
     #[test]
     fn test_quota_fallback_when_summary_is_none() {
-        let mut acc = AccountProfile::default();
-        acc.email = "test@example.com".to_string();
+        let acc = AccountProfile {
+            email: "test@example.com".to_string(),
+            ..Default::default()
+        };
         // Verify fallback result construction without panicking
         assert_eq!(acc.email, "test@example.com");
     }
