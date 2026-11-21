@@ -1,0 +1,5 @@
+usage: agy-token pace [-h] [--force]
+
+options:
+  -h, --help  show this help message and exit
+  --force     Bypass cache and refresh quotas directly

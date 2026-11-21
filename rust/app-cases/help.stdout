@@ -1,0 +1,36 @@
+usage: agy-token [-h]
+                 {status,shield,ip,watch,check,sync,snapshot,save,list,remove,daemon,web,tray,switch,doctor,balance,pace,burn,test-notify,notify-test,test-toast} ...
+
+Antigravity Account Token & Quota Lifecycle Tracker
+
+positional arguments:
+  {status,shield,ip,watch,check,sync,snapshot,save,list,remove,daemon,web,tray,switch,doctor,balance,pace,burn,test-notify,notify-test,test-toast}
+                        Available subcommands
+    status              Show token quota status and weekly refresh countdowns
+    shield              Manage Geo-Shield and emergency IP Killswitch
+    ip                  Display public exit IP, geolocation, and Antigravity
+                        compatibility
+    watch               Live auto-updating dashboard
+    check               Fast exit-code / JSON check (for shell
+                        scripts/prompts)
+    sync                Sync active account from Antigravity IDE / app session
+    snapshot (save)     Explicitly capture and save session snapshots from
+                        active IDE / App
+    list                List all registered account profiles
+    remove              Remove an account from tracking
+    daemon              Run background monitor with desktop alerts and auto-
+                        failover
+    web                 Start interactive browser dashboard
+    tray                Start native Linux top-bar / system tray applet
+    switch              Instantly switch active account session
+    doctor              Audit account tokens, system keyring, services, and
+                        1-click switch readiness
+    balance             Manage multi-account pool rotation & watermark
+                        balancing
+    pace (burn)         Display token burn rate velocity and Runout Clock
+                        prediction
+    test-notify (notify-test, test-toast)
+                        Test 1-click desktop notification action buttons
+
+options:
+  -h, --help            show this help message and exit

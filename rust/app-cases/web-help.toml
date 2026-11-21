@@ -1,0 +1,4 @@
+bin.name = "run_tracker"
+args = ["web", "--help"]
+status.code = 0
+fs.sandbox = true

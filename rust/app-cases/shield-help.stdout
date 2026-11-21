@@ -1,0 +1,18 @@
+usage: agy-token shield [-h] [--mode {restricted,whitelist}]
+                        [--allow COUNTRIES]
+                        [--action {kill_process,kill_network,both}]
+                        [{status,on,enable,off,disable,mode,allow,action,trigger}]
+                        [extra_arg]
+
+positional arguments:
+  {status,on,enable,off,disable,mode,allow,action,trigger}
+                        Shield action to perform
+  extra_arg             Parameter value for mode/allow/action
+
+options:
+  -h, --help            show this help message and exit
+  --mode {restricted,whitelist}
+                        Policy mode
+  --allow COUNTRIES     Comma-separated country codes (e.g. US,DE,GB)
+  --action {kill_process,kill_network,both}
+                        Action on violation

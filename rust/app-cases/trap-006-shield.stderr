@@ -1,0 +1,6 @@
+usage: agy-token shield [-h] [--mode {restricted,whitelist}]
+                        [--allow COUNTRIES]
+                        [--action {kill_process,kill_network,both}]
+                        [{status,on,enable,off,disable,mode,allow,action,trigger}]
+                        [extra_arg]
+agy-token shield: error: argument shield_action: invalid choice: 'İstanbul' (choose from status, on, enable, off, disable, mode, allow, action, trigger)

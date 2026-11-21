@@ -1,0 +1,15 @@
+usage: agy-token daemon [-h] [--interval INTERVAL] [--auto-switch]
+                        [--threshold THRESHOLD] [--cooldown COOLDOWN]
+                        [--no-restart] [--tray]
+
+options:
+  -h, --help            show this help message and exit
+  --interval INTERVAL   Polling interval in seconds (default: 300)
+  --auto-switch         Automatically switch session when active account quota
+                        runs out
+  --threshold THRESHOLD
+                        Quota percentage threshold to trigger auto-failover
+                        (default: 1.0%)
+  --cooldown COOLDOWN   Minimum seconds between auto-failovers (default: 120)
+  --no-restart          Swap session without restarting Antigravity
+  --tray                Launch top-bar system tray indicator alongside daemon

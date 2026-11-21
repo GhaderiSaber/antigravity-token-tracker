@@ -1,0 +1,6 @@
+usage: agy-token status [-h] [--models] [--force]
+
+options:
+  -h, --help  show this help message and exit
+  --models    Display all individual model quotas
+  --force     Bypass local cache and query Google directly

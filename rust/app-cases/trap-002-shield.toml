@@ -1,0 +1,4 @@
+bin.name = "run_tracker"
+args = ["shield", "👍🏽 thumbs"]
+status.code = 2
+fs.sandbox = true

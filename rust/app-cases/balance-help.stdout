@@ -1,0 +1,26 @@
+usage: agy-token balance [-h]
+                         [--strategy {watermark,expiry_first,round_robin,reactive}]
+                         [--spread SPREAD] [--interval INTERVAL]
+                         [--expiry-window EXPIRY_WINDOW]
+                         [--min-quota MIN_QUOTA] [--dry-run] [--force]
+                         [{status,on,enable,off,disable,strategy,rotate,config}]
+                         [extra_arg]
+
+positional arguments:
+  {status,on,enable,off,disable,strategy,rotate,config}
+                        Action to perform (default: status)
+  extra_arg             Strategy name or value
+
+options:
+  -h, --help            show this help message and exit
+  --strategy {watermark,expiry_first,round_robin,reactive}
+                        Strategy mode
+  --spread SPREAD       Watermark spread percentage (e.g. 20.0)
+  --interval INTERVAL   Round-robin interval in minutes (e.g. 60)
+  --expiry-window EXPIRY_WINDOW
+                        Expiry first window in hours (e.g. 36)
+  --min-quota MIN_QUOTA
+                        Minimum quota percentage for candidate eligibility
+                        (e.g. 5.0)
+  --dry-run             Simulate rotation without executing switch
+  --force               Bypass cooldown and balancer enabled check

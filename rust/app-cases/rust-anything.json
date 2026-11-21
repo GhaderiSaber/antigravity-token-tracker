@@ -1,0 +1,5 @@
+{
+  "schema": "rust-anything/app-cases@1",
+  "name": "run_tracker",
+  "run": ["python3", "run_tracker.py"]
+}

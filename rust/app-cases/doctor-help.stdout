@@ -1,0 +1,7 @@
+usage: agy-token doctor [-h] [--fix] [--no-network]
+
+options:
+  -h, --help    show this help message and exit
+  --fix         Automatically repair file permissions, refresh stale tokens,
+                and restart services
+  --no-network  Skip remote Google OAuth token validation

@@ -1,0 +1,14 @@
+{"name": "help", "args": ["--help"]}
+{"name": "status-help", "args": ["status", "--help"]}
+{"name": "check-help", "args": ["check", "--help"]}
+{"name": "ip-help", "args": ["ip", "--help"]}
+{"name": "shield-help", "args": ["shield", "--help"]}
+{"name": "list-help", "args": ["list", "--help"]}
+{"name": "doctor-help", "args": ["doctor", "--help"]}
+{"name": "balance-help", "args": ["balance", "--help"]}
+{"name": "pace-help", "args": ["pace", "--help"]}
+{"name": "web-help", "args": ["web", "--help"]}
+{"name": "daemon-help", "args": ["daemon", "--help"]}
+{"name": "tray-help", "args": ["tray", "--help"]}
+{"name": "list", "args": ["list"]}
+{"name": "shield-status", "args": ["shield", "status"]}

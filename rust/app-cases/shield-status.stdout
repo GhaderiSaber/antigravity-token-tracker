@@ -1,0 +1,15 @@
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│         🛡️ Antigravity Geo-Shield & Killswitch Configuration                  │
+│  Property                    Value                                           │
+│  Shield Status               ○ DISABLED (Protection OFF)                     │
+│  Mode                        Restricted                                      │
+│  Enforcement Action          kill_process                                    │
+│  Allowed Whitelist           US, DE, GB, NL, CA, FR, JP, CH                  │
+│  Auto-Relaunch on Reconnect  No                                              │
+│  Current Egress IP           [..]│
+│  Policy Check                ✓ COMPLIANT (Safe to run Antigravity)           │
+╰──────────────────────────────────────────────────────────────────────────────╯
+Commands: `agy-token shield on|off`, `agy-token shield mode 
+restricted|whitelist`, `agy-token shield allow US,DE,GB`
+

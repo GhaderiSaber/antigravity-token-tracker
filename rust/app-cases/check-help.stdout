@@ -1,0 +1,6 @@
+usage: agy-token check [-h] [--json] [--force]
+
+options:
+  -h, --help  show this help message and exit
+  --json      Output machine-readable JSON
+  --force     Bypass local cache

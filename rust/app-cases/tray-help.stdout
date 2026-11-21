@@ -1,0 +1,5 @@
+usage: agy-token tray [-h] [--interval INTERVAL]
+
+options:
+  -h, --help           show this help message and exit
+  --interval INTERVAL  Polling interval in seconds (default: 60)

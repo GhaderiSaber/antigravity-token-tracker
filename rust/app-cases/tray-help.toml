@@ -1,0 +1,4 @@
+bin.name = "run_tracker"
+args = ["tray", "--help"]
+status.code = 0
+fs.sandbox = true

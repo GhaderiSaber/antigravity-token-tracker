@@ -1,0 +1,6 @@
+usage: agy-token ip [-h] [--refresh] [--json]
+
+options:
+  -h, --help  show this help message and exit
+  --refresh   Bypass 60s cache and re-query live IP service
+  --json      Output machine-readable JSON

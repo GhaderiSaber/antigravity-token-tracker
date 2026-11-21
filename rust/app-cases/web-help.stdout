@@ -1,0 +1,7 @@
+usage: agy-token web [-h] [--port PORT] [--bg]
+
+options:
+  -h, --help          show this help message and exit
+  --port PORT         Port to listen on (default: 8765)
+  --bg, --background  Run dashboard in background daemon thread instead of
+                      blocking
