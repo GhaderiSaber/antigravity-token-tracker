@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-# ⚡ Antigravity Token Tracker Installer
+# ⚡ Antigravity Token Tracker Installer (Rust Native)
 echo "====================================================="
 echo "  ⚡ Installing Antigravity Token & Quota Tracker"
 echo "====================================================="
@@ -10,45 +10,65 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_DIR="$HOME/.local/bin"
 TARGET_BIN="$BIN_DIR/agy-token"
 
-# 1. Verify Python 3
-if ! command -v python3 &>/dev/null; then
-    echo "❌ Error: Python 3 is required but not installed."
-    echo "   Please install python3 (e.g. sudo apt install python3) and retry."
+# 1. Verify Cargo / Rust
+if ! command -v cargo &>/dev/null; then
+    echo "❌ Error: Rust & Cargo are required to build the release binary."
+    echo "   Please install Rust (curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh) and retry."
     exit 1
 fi
 
-PY_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-echo "✓ Found Python $PY_VER"
+echo "✓ Found Cargo $(cargo --version)"
 
-# 2. Install Python Dependencies
-echo "📦 Checking required dependencies (rich)..."
-if python3 -c "import rich" &>/dev/null; then
-    echo "✓ Required dependencies already satisfied (rich found)."
-elif [ -n "$VIRTUAL_ENV" ]; then
-    echo "📦 Installing dependencies into active virtual environment..."
-    python3 -m pip install -r "$SCRIPT_DIR/requirements.txt" --quiet
-    echo "✓ Installed required dependencies into virtual environment."
-elif python3 -m pip install --user -r "$SCRIPT_DIR/requirements.txt" --quiet 2>/dev/null; then
-    echo "✓ Installed required dependencies."
-elif python3 -m pip install --user --break-system-packages -r "$SCRIPT_DIR/requirements.txt" --quiet 2>/dev/null; then
-    echo "✓ Installed required dependencies (--break-system-packages)."
-else
-    echo "⚠️  Could not automatically install dependencies due to system package management restrictions (PEP 668)."
-    echo "   Please install 'rich' via your package manager:"
-    echo "     sudo apt install python3-rich"
-    echo "   or run:"
-    echo "     pip install --user --break-system-packages -r requirements.txt"
-    exit 1
-fi
+# 2. Build optimized release binary
+echo "🔨 Compiling standalone release binary..."
+cargo build --release --manifest-path "$SCRIPT_DIR/Cargo.toml"
 
-# 3. Create CLI symlink in ~/.local/bin
+# 3. Copy binary to ~/.local/bin
 mkdir -p "$BIN_DIR"
-chmod +x "$SCRIPT_DIR/run_tracker.py"
+cp -f "$SCRIPT_DIR/target/release/run_tracker" "$TARGET_BIN"
+chmod +x "$TARGET_BIN"
+echo "✓ Installed standalone executable: $TARGET_BIN"
 
-ln -sf "$SCRIPT_DIR/run_tracker.py" "$TARGET_BIN"
-echo "✓ Created executable symlink: $TARGET_BIN"
+# 4. Desktop Autostart setup
+mkdir -p "$HOME/.config/autostart"
+cat << 'EOF' > "$HOME/.config/autostart/agy-token.desktop"
+[Desktop Entry]
+Type=Application
+Name=Antigravity Token Tracker
+Comment=Top-Bar Tray Indicator and Quota Monitor
+Exec=/home/ghaderi-saber/.local/bin/agy-token tray
+Icon=utilities-system-monitor
+Terminal=false
+Categories=Utility;System;
+X-GNOME-Autostart-enabled=true
+EOF
+chmod 644 "$HOME/.config/autostart/agy-token.desktop"
+echo "✓ Configured desktop autostart: $HOME/.config/autostart/agy-token.desktop"
 
-# 4. PATH verification
+# 5. Optional Systemd User Service
+mkdir -p "$HOME/.config/systemd/user"
+cat << 'EOF' > "$HOME/.config/systemd/user/antigravity-token-tracker.service"
+[Unit]
+Description=Antigravity Account Token & Quota Lifecycle Tray Daemon (Rust Native)
+After=network.target graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/agy-token tray --interval 60
+Restart=on-failure
+RestartSec=15
+Environment=DISPLAY=:0
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%U/bus
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=default.target
+EOF
+systemctl --user daemon-reload 2>/dev/null || true
+echo "✓ Updated systemd user service template"
+
+# 6. PATH verification
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
     echo ""
     echo "⚠️  Note: $BIN_DIR is not currently in your \$PATH."
@@ -57,70 +77,6 @@ if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
     echo ""
 fi
 
-# 5. Optional Systemd Background Daemon setup
-SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
-mkdir -p "$SYSTEMD_USER_DIR"
-USER_SERVICE_FILE="$SYSTEMD_USER_DIR/antigravity-token-tracker.service"
-
-CURRENT_UID=$(id -u)
-cat << EOF > "$USER_SERVICE_FILE"
-[Unit]
-Description=Antigravity Account Token & Quota Lifecycle Daemon
-After=network.target
-
-[Service]
-Type=simple
-# Zero-downtime auto-failover, top-bar indicator, and desktop alerts
-ExecStart=$TARGET_BIN daemon --interval 300 --auto-switch --tray
-Restart=on-failure
-RestartSec=30
-Environment=DISPLAY=:0
-Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$CURRENT_UID/bus
-Environment=PYTHONUNBUFFERED=1
-
-[Install]
-WantedBy=default.target
-EOF
-
-echo "✓ Created systemd service template: $USER_SERVICE_FILE"
-
-# 5b. Autostart & Tray Deduplication
-# Since the systemd service runs the unified daemon + tray indicator with single-instance locking,
-# clean up any legacy standalone autostart desktop entry so GNOME doesn't spawn redundant processes.
-if [ -f "$HOME/.config/autostart/antigravity-token-tracker-tray.desktop" ]; then
-    rm -f "$HOME/.config/autostart/antigravity-token-tracker-tray.desktop"
-    echo "✓ Cleaned up redundant autostart entry ~/.config/autostart/antigravity-token-tracker-tray.desktop (systemd daemon handles tray)"
-fi
-
-# 5c. Desktop Application Menu Entry
-DESKTOP_APPS_DIR="$HOME/.local/share/applications"
-mkdir -p "$DESKTOP_APPS_DIR"
-cp "$SCRIPT_DIR/antigravity-token-tracker-tray.desktop" "$DESKTOP_APPS_DIR/antigravity-token-tracker-tray.desktop"
-echo "✓ Installed desktop application entry: $DESKTOP_APPS_DIR/antigravity-token-tracker-tray.desktop"
-
-# Reload systemd daemon if available
-if command -v systemctl &>/dev/null; then
-    systemctl --user daemon-reload 2>/dev/null || true
-fi
-
-# 6. Initial Account Discovery
 echo ""
-echo "🔍 Discovering active Antigravity sessions..."
-"$TARGET_BIN" sync || true
-
-echo ""
-echo "====================================================="
-echo "  🎉 Installation Complete!"
-echo "====================================================="
-echo ""
-echo "Quick Commands:"
-echo "  • agy-token status       View current token usage and countdowns"
-echo "  • agy-token switch       Interactively choose and switch accounts"
-echo "  • agy-token tray         Launch top-bar system tray indicator"
-echo "  • agy-token web          Launch the browser dashboard (http://localhost:8765)"
-echo "  • agy-token watch        Live terminal monitor"
-echo ""
-echo "Optional - Enable automatic background notifications & top-bar tray:"
-echo "  systemctl --user daemon-reload"
-echo "  systemctl --user enable --now antigravity-token-tracker.service"
-echo ""
+echo "✅ Installation complete!"
+echo "Run 'agy-token status' or 'agy-token ip' to verify."
