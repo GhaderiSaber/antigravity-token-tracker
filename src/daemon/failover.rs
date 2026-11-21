@@ -123,12 +123,7 @@ pub fn find_best_failover_candidate(
         }
     }
 
-    if candidates.is_empty() {
-        return None;
-    }
-
-    candidates.sort_by(|a, b| b.1.total_cmp(&a.1));
-    Some(candidates.remove(0))
+    candidates.into_iter().max_by(|a, b| a.1.total_cmp(&b.1))
 }
 
 pub fn get_failover_status(

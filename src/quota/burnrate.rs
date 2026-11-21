@@ -46,7 +46,7 @@ pub fn load_snapshots(
     snapshots.sort_by(|a, b| {
         let ts_a = a.get("timestamp").and_then(|v| v.as_f64()).unwrap_or(0.0);
         let ts_b = b.get("timestamp").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        ts_a.partial_cmp(&ts_b).unwrap_or(std::cmp::Ordering::Equal)
+        ts_a.total_cmp(&ts_b)
     });
 
     if snapshots.len() > limit {
