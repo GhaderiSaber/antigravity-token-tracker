@@ -6,6 +6,7 @@ __pycache__/
 # Distribution / packaging
 /dist/
 build/
+target/
 *.egg-info/
 *.egg
 frontend/node_modules/

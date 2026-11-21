@@ -25,6 +25,8 @@ def load_accounts() -> Dict[str, Dict[str, Any]]:
         with open(ACCOUNTS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
             if isinstance(data, dict):
+                if "accounts" in data and isinstance(data["accounts"], dict):
+                    return data["accounts"]
                 return data
     except Exception as e:
         print(f"[Accounts] Error reading {ACCOUNTS_FILE}: {e}")
@@ -35,9 +37,23 @@ def load_accounts() -> Dict[str, Dict[str, Any]]:
 def save_accounts(accounts: Dict[str, Dict[str, Any]]):
     """Saves accounts dictionary to accounts.json with secure 0600 file permissions."""
     _ensure_config_dir()
+    active_email = None
+    if os.path.isfile(ACCOUNTS_FILE):
+        try:
+            with open(ACCOUNTS_FILE, "r", encoding="utf-8") as f:
+                existing_file = json.load(f)
+                if isinstance(existing_file, dict) and "active_email" in existing_file:
+                    active_email = existing_file.get("active_email")
+        except Exception:
+            pass
+
+    out_data = accounts
+    if active_email:
+        out_data = {"active_email": active_email, "accounts": accounts}
+
     tmp_file = ACCOUNTS_FILE + ".tmp"
     with open(tmp_file, "w", encoding="utf-8") as f:
-        json.dump(accounts, f, indent=2)
+        json.dump(out_data, f, indent=2)
     os.chmod(tmp_file, 0o600)
     os.replace(tmp_file, ACCOUNTS_FILE)
 
