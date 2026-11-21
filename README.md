@@ -48,7 +48,7 @@ A standalone, multi-account lifecycle monitor and alerting utility for Google An
 
 ### Requirements
 - **OS**: Linux (Ubuntu, Debian, Fedora, Arch, openSUSE, WSL2, etc.) or macOS
-- **Python**: 3.8 or higher
+- **Rust & Cargo**: Rust 1.85+ (Edition 2024)
 - **Antigravity**: Antigravity Desktop App and/or Antigravity IDE installed
 
 ### 1. One-Line Automated Install (Recommended)
@@ -59,33 +59,28 @@ cd antigravity-token-tracker
 ./install.sh
 ```
 The installer will:
-1. Verify Python 3 installation.
-2. Install the lightweight `rich` dependency via `pip`.
-3. Create the `agy-token` global executable command in `~/.local/bin/`.
-4. Generate an automated systemd user service configured for your user.
-5. Perform initial discovery and sync of your active Antigravity session.
+1. Verify Rust & Cargo are installed.
+2. Compile the standalone, optimized release binary (`cargo build --release`).
+3. Install the `agy-token` executable to `~/.local/bin/`.
+4. Configure desktop autostart (`~/.config/autostart/agy-token.desktop`).
+5. Configure systemd user service (`antigravity-token-tracker.service`).
 
 > [!TIP]
 > Ensure `~/.local/bin` is in your `PATH` (typically standard on modern Linux). If `agy-token` is not found, add `export PATH="$HOME/.local/bin:$PATH"` to your `~/.bashrc` or `~/.zshrc`.
 
-### 2. Manual Installation (Alternative)
-If you prefer not to use the installer script:
+### 2. Manual Build & Install (Alternative)
+If you prefer building and installing manually:
 ```bash
-# 1. Install dependencies
-pip install -r requirements.txt
+# 1. Compile release binary
+cargo build --release
 
-# 2. Link executable to your PATH
+# 2. Install binary to your PATH
 mkdir -p ~/.local/bin
-ln -sf "$(pwd)/run_tracker.py" ~/.local/bin/agy-token
-chmod +x run_tracker.py
+cp target/release/run_tracker ~/.local/bin/agy-token
+chmod +x ~/.local/bin/agy-token
 
 # 3. Sync initial account
 agy-token sync
-```
-
-Or install as an editable Python package:
-```bash
-pip install -e .
 ```
 
 ### 3. Background Notifications (Systemd Service)
