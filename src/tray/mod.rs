@@ -21,7 +21,7 @@ pub async fn run_tray(
     // 1. Singleton lock
     let _lock = match TrayLock::acquire(lock_path) {
         Ok(l) => l,
-        Err(existing_pid) => {
+        Err(TrayLockError::AlreadyRunning(existing_pid)) => {
             let pid_str = existing_pid
                 .map(|p| format!(" (PID {p})"))
                 .unwrap_or_default();
@@ -30,6 +30,7 @@ pub async fn run_tray(
             );
             return Ok(());
         }
+        Err(TrayLockError::Io(e)) => return Err(e.into()),
     };
 
     // 2. Start background web server
@@ -217,7 +218,7 @@ mod tests {
         assert!(lock1.is_ok());
 
         let lock2 = lock::TrayLock::acquire(Some(&test_lock_file));
-        assert!(lock2.is_err());
+        assert!(matches!(lock2, Err(TrayLockError::AlreadyRunning(_))));
 
         drop(lock1);
         let lock3 = lock::TrayLock::acquire(Some(&test_lock_file));

@@ -3,12 +3,23 @@ use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, thiserror::Error)]
+pub enum TrayLockError {
+    #[error("I/O error accessing lockfile: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Another instance is already running (PID: {0:?})")]
+    AlreadyRunning(Option<u32>),
+}
+
 pub fn default_lock_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    PathBuf::from(home)
-        .join(".config")
-        .join("antigravity-token-tracker")
-        .join("tray.lock")
+    dirs::config_dir().map_or_else(
+        || {
+            PathBuf::from(".config")
+                .join("antigravity-token-tracker")
+                .join("tray.lock")
+        },
+        |c| c.join("antigravity-token-tracker").join("tray.lock"),
+    )
 }
 
 pub struct TrayLock {
@@ -17,25 +28,22 @@ pub struct TrayLock {
 }
 
 impl TrayLock {
-    pub fn acquire(custom_path: Option<&Path>) -> Result<Self, Option<u32>> {
+    pub fn acquire(custom_path: Option<&Path>) -> Result<Self, TrayLockError> {
         let path = match custom_path {
             Some(p) => p.to_path_buf(),
             None => default_lock_path(),
         };
 
         if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            std::fs::create_dir_all(parent)?;
         }
 
-        let Ok(mut file) = OpenOptions::new()
+        let mut file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
-            .open(&path)
-        else {
-            return Err(None);
-        };
+            .open(&path)?;
 
         match file.try_lock_exclusive() {
             Ok(()) => {
@@ -52,7 +60,7 @@ impl TrayLock {
                 let mut content = String::new();
                 let _ = file.read_to_string(&mut content);
                 let existing_pid = content.trim().parse::<u32>().ok();
-                Err(existing_pid)
+                Err(TrayLockError::AlreadyRunning(existing_pid))
             }
         }
     }
@@ -62,5 +70,40 @@ impl Drop for TrayLock {
     fn drop(&mut self) {
         let _ = fs2::FileExt::unlock(&self._file);
         let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tray_lock_error_display() {
+        let err = TrayLockError::AlreadyRunning(Some(1234));
+        assert_eq!(
+            err.to_string(),
+            "Another instance is already running (PID: Some(1234))"
+        );
+
+        let err_none = TrayLockError::AlreadyRunning(None);
+        assert_eq!(
+            err_none.to_string(),
+            "Another instance is already running (PID: None)"
+        );
+
+        let io_err = TrayLockError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "file not found",
+        ));
+        assert!(io_err.to_string().contains("I/O error accessing lockfile"));
+    }
+
+    #[test]
+    fn test_default_lock_path() {
+        let path = default_lock_path();
+        assert!(
+            path.to_string_lossy()
+                .ends_with("antigravity-token-tracker/tray.lock")
+        );
     }
 }
