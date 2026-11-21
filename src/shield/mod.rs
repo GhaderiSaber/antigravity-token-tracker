@@ -109,4 +109,33 @@ mod tests {
         let reloaded = load_shield_config(dir.path());
         assert!(!reloaded.enabled);
     }
+
+    #[tokio::test]
+    async fn test_shield_evaluation_no_poisoning() {
+        let dir = tempdir().unwrap();
+        let config_dir = dir.path();
+        let def = ShieldConfig::default();
+        save_shield_config(config_dir, &def).unwrap();
+
+        let geo = EgressGeo {
+            ip: "1.1.1.1".into(),
+            country_code: "US".into(),
+            country_name: "United States".into(),
+            is_restricted: false,
+            ..Default::default()
+        };
+        // Run multiple parallel evaluations
+        let mut handles = Vec::new();
+        for _ in 0..10 {
+            let g = geo.clone();
+            let path = config_dir.to_path_buf();
+            handles.push(tokio::spawn(async move {
+                evaluate_and_enforce_shield(&path, Some(g)).await
+            }));
+        }
+        for h in handles {
+            let res = h.await.unwrap();
+            assert!(!res.violation);
+        }
+    }
 }

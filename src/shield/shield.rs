@@ -5,13 +5,13 @@ use nix::unistd::Pid;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::sleep;
 use std::time::Duration;
 use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 
-static LAST_TRIGGER_TIMESTAMP: Mutex<f64> = Mutex::new(0.0);
-static WAS_VIOLATING: Mutex<bool> = Mutex::new(false);
+static LAST_TRIGGER_TIMESTAMP_BITS: AtomicU64 = AtomicU64::new(0);
+static WAS_VIOLATING: AtomicBool = AtomicBool::new(false);
 
 pub fn default_config_dir() -> PathBuf {
     crate::storage::default_config_dir()
@@ -207,9 +207,9 @@ pub async fn evaluate_and_enforce_shield(
     if !cfg.enabled {
         let (allowed, reason) = is_ip_allowed(&geo_info, &cfg);
         let now = now_epoch();
-        let mut last_trigger = LAST_TRIGGER_TIMESTAMP.lock().unwrap();
-        if !allowed && (now - *last_trigger) > cfg.cooldown_seconds as f64 {
-            *last_trigger = now;
+        let last_trigger = f64::from_bits(LAST_TRIGGER_TIMESTAMP_BITS.load(Ordering::Relaxed));
+        if !allowed && (now - last_trigger) > cfg.cooldown_seconds as f64 {
+            LAST_TRIGGER_TIMESTAMP_BITS.store(now.to_bits(), Ordering::Relaxed);
             // Alert can be sent
         }
         return ShieldEvaluation {
@@ -229,8 +229,7 @@ pub async fn evaluate_and_enforce_shield(
     let now = now_epoch();
 
     if !allowed {
-        let mut was_violating = WAS_VIOLATING.lock().unwrap();
-        *was_violating = true;
+        WAS_VIOLATING.store(true, Ordering::SeqCst);
 
         let (killed_count, killed_pids) = if cfg.action == "kill_process" || cfg.action == "both" {
             kill_antigravity_processes(true)
@@ -238,9 +237,9 @@ pub async fn evaluate_and_enforce_shield(
             (0, Vec::new())
         };
 
-        let mut last_trigger = LAST_TRIGGER_TIMESTAMP.lock().unwrap();
-        if (now - *last_trigger) > cfg.cooldown_seconds as f64 {
-            *last_trigger = now;
+        let last_trigger = f64::from_bits(LAST_TRIGGER_TIMESTAMP_BITS.load(Ordering::Relaxed));
+        if (now - last_trigger) > cfg.cooldown_seconds as f64 {
+            LAST_TRIGGER_TIMESTAMP_BITS.store(now.to_bits(), Ordering::Relaxed);
         }
 
         ShieldEvaluation {
@@ -255,10 +254,7 @@ pub async fn evaluate_and_enforce_shield(
             geo: Some(geo_info),
         }
     } else {
-        let mut was_violating = WAS_VIOLATING.lock().unwrap();
-        if *was_violating {
-            *was_violating = false;
-        }
+        WAS_VIOLATING.swap(false, Ordering::SeqCst);
 
         ShieldEvaluation {
             enabled: true,
