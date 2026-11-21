@@ -202,4 +202,12 @@ mod tests {
         assert_eq!(chosen.email, acc2.email);
         assert!(reason.contains("Round-robin rotation window reached"));
     }
+
+    #[test]
+    fn test_launch_antigravity_helper() {
+        // launch_antigravity attempts to spawn /snap/bin/antigravity or antigravity with process_group(0).
+        // It returns a boolean and must execute without panicking regardless of whether the binary exists.
+        let result = launch_antigravity();
+        let _ = result;
+    }
 }

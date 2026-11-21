@@ -667,13 +667,7 @@ pub fn launch_antigravity() -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        // SAFETY: setsid safely detaches the spawned process into its own session.
-        unsafe {
-            cmd.pre_exec(|| {
-                libc::setsid();
-                Ok(())
-            });
-        }
+        cmd.process_group(0);
     }
 
     cmd.spawn().is_ok()
