@@ -76,12 +76,12 @@ pub fn render_tray_icon(pct: f64, is_exhausted: bool) -> (Icon, String) {
 
             if point_in_polygon(px, py, &bolt_pts) {
                 // Lightning bolt
-                pixel_a = 240;
+                pixel_a = 255;
                 pixel_r = 255;
                 pixel_g = 255;
                 pixel_b = 255;
-            } else if (17.0..=21.0).contains(&dist) {
-                // Ring track
+            } else if (15.0..=22.0).contains(&dist) {
+                // Ring track (thickened for crisp downsampling on 16x16 / 22x22 panels)
                 let theta = dy.atan2(dx);
                 let deg = (theta.to_degrees() + 90.0).rem_euclid(360.0);
                 if deg <= fraction * 360.0 {
@@ -90,10 +90,10 @@ pub fn render_tray_icon(pct: f64, is_exhausted: bool) -> (Icon, String) {
                     pixel_g = g;
                     pixel_b = b;
                 } else {
-                    pixel_a = 160;
-                    pixel_r = 60;
-                    pixel_g = 64;
-                    pixel_b = 72;
+                    pixel_a = 180;
+                    pixel_r = 75;
+                    pixel_g = 80;
+                    pixel_b = 90;
                 }
             }
 

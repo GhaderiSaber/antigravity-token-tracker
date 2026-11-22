@@ -38,64 +38,26 @@ pub async fn run_tray(
         let _ = crate::web::server::start_web_server(8765).await;
     });
 
-    // 3. Initial state
-    println!("[Tray] Initializing storage and discovering active sessions...");
+    // 3. Instant Initial State from Local Storage (zero network blocking)
     let storage = StorageManager::default();
-    let _ = crate::auth::sync::sync_from_antigravity(&storage).await;
-    println!("[Tray] Fetching account quotas...");
-    let all_q = crate::quota::quota::fetch_all_accounts_quota(false).await;
-    println!("[Tray] Verifying egress IP...");
-    let geo = crate::shield::geo::get_ip_geo(false).await;
-    let _ =
-        crate::shield::shield::evaluate_and_enforce_shield(storage.config_dir(), Some(geo.clone()))
-            .await;
-
     let registered = storage.load_accounts().unwrap_or_default();
     let accounts_list: Vec<crate::storage::models::AccountProfile> =
         registered.accounts.into_values().collect();
 
-    let mut min_pct = 100.0f64;
-    let mut is_exhausted = false;
-    let mut active_summary = String::new();
-
-    for (email, q) in &all_q {
-        let is_active = q.is_current_desktop_session || q.is_current_ide_session;
-        if is_active {
-            let p = q
-                .groups
-                .iter()
-                .filter_map(|g| g.weekly.as_ref().and_then(|w| w.remaining_percent))
-                .fold(100.0f64, f64::min);
-            if p < min_pct {
-                min_pct = p;
-            }
-            if min_pct <= 0.0 {
-                is_exhausted = true;
-            }
-            active_summary = format!("{email}: {min_pct:.1}% remaining");
-        }
-    }
-
-    if active_summary.is_empty() {
-        min_pct = 0.0;
-        is_exhausted = true;
-        active_summary = "No active session detected".to_string();
-    }
-
-    let (icon_data, icon_name) = icon::render_tray_icon(min_pct, is_exhausted);
-
     let shield_cfg = crate::shield::shield::load_shield_config(storage.config_dir());
     let bal_cfg = crate::balancer::balancer::load_balancer_config();
 
+    let (icon_data, icon_name) = icon::render_tray_icon(100.0, false);
+
     let initial_state = TrayState {
-        min_pct,
-        is_exhausted,
-        active_summary,
+        min_pct: 100.0,
+        is_exhausted: false,
+        active_summary: "Initializing quota monitor...".to_string(),
         icon_name,
         icon: icon_data,
         accounts: accounts_list,
-        geo_summary: format!("{} ({})", geo.ip, geo.country_code),
-        is_restricted: geo.is_restricted,
+        geo_summary: String::new(),
+        is_restricted: false,
         is_shield_enabled: shield_cfg.enabled,
         is_balancer_enabled: bal_cfg.enabled,
         balancer_strategy: bal_cfg.strategy,
@@ -107,16 +69,13 @@ pub async fn run_tray(
         state: shared_state.clone(),
     };
 
-    // 4. Spawn tray service
+    // 4. Spawn tray service immediately over DBus
     println!("[Tray] Registering StatusNotifierItem over DBus...");
     let service = tray.spawn().await?;
-
     println!("[Tray] Registered with desktop StatusNotifierWatcher.");
 
-    // 5. Periodic update loop
+    // 5. Periodic update loop (first tick fires immediately to fetch live data)
     let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
-    // Consume initial tick
-    interval.tick().await;
 
     loop {
         tokio::select! {

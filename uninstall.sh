@@ -11,8 +11,12 @@ fi
 
 # Remove service file
 rm -f "$HOME/.config/systemd/user/antigravity-token-tracker.service"
+if command -v systemctl &>/dev/null; then
+    systemctl --user daemon-reload 2>/dev/null || true
+fi
 
-# Remove desktop entry
+# Remove desktop autostart entries
+rm -f "$HOME/.config/autostart/agy-token.desktop"
 rm -f "$HOME/.local/share/applications/antigravity-token-tracker-tray.desktop"
 
 # Remove CLI symlink

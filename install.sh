@@ -29,25 +29,9 @@ cp -f "$SCRIPT_DIR/target/release/run_tracker" "$TARGET_BIN"
 chmod +x "$TARGET_BIN"
 echo "✓ Installed standalone executable: $TARGET_BIN"
 
-# 4. Desktop Autostart setup
-mkdir -p "$HOME/.config/autostart"
-cat << 'EOF' > "$HOME/.config/autostart/agy-token.desktop"
-[Desktop Entry]
-Type=Application
-Name=Antigravity Token Tracker
-Comment=Top-Bar Tray Indicator and Quota Monitor
-Exec=/home/ghaderi-saber/.local/bin/agy-token tray
-Icon=utilities-system-monitor
-Terminal=false
-Categories=Utility;System;
-X-GNOME-Autostart-enabled=true
-EOF
-chmod 644 "$HOME/.config/autostart/agy-token.desktop"
-echo "✓ Configured desktop autostart: $HOME/.config/autostart/agy-token.desktop"
-
-# 5. Optional Systemd User Service
+# 4. Service and Background Autostart Configuration
 mkdir -p "$HOME/.config/systemd/user"
-cat << 'EOF' > "$HOME/.config/systemd/user/antigravity-token-tracker.service"
+cat << EOF > "$HOME/.config/systemd/user/antigravity-token-tracker.service"
 [Unit]
 Description=Antigravity Account Token & Quota Lifecycle Tray Daemon (Rust Native)
 After=network.target graphical-session.target
@@ -55,7 +39,7 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/agy-token tray --interval 60
+ExecStart=$TARGET_BIN tray --interval 60
 Restart=on-failure
 RestartSec=15
 Environment=DISPLAY=:0
@@ -65,8 +49,34 @@ Environment=RUST_LOG=info
 [Install]
 WantedBy=default.target
 EOF
-systemctl --user daemon-reload 2>/dev/null || true
-echo "✓ Updated systemd user service template"
+
+# Determine optimal background runner (systemd user service vs desktop autostart)
+if command -v systemctl &>/dev/null && systemctl --user status &>/dev/null; then
+    systemctl --user daemon-reload 2>/dev/null || true
+    systemctl --user enable --now antigravity-token-tracker.service 2>/dev/null || true
+    # Remove redundant autostart entry to prevent duplicate singleton lock conflicts
+    rm -f "$HOME/.config/autostart/agy-token.desktop"
+    echo "✓ Enabled and started systemd user service: antigravity-token-tracker.service"
+else
+    # Fallback for non-systemd environments: configure desktop autostart
+    mkdir -p "$HOME/.config/autostart"
+    cat << EOF > "$HOME/.config/autostart/agy-token.desktop"
+[Desktop Entry]
+Type=Application
+Name=Antigravity Token Tracker
+Comment=Top-Bar Tray Indicator and Quota Monitor
+Exec=$TARGET_BIN tray
+Icon=utilities-system-monitor
+Terminal=false
+Categories=Utility;System;
+X-GNOME-Autostart-enabled=true
+EOF
+    chmod 644 "$HOME/.config/autostart/agy-token.desktop"
+    echo "✓ Configured desktop autostart: $HOME/.config/autostart/agy-token.desktop"
+    # Launch immediately in background for current session
+    nohup "$TARGET_BIN" tray >/dev/null 2>&1 &
+    echo "✓ Started background tray indicator in current session (PID $!)"
+fi
 
 # 6. PATH verification
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then

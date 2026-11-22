@@ -62,13 +62,30 @@ The installer will:
 1. Verify Rust & Cargo are installed.
 2. Compile the standalone, optimized release binary (`cargo build --release`).
 3. Install the `agy-token` executable to `~/.local/bin/`.
-4. Configure desktop autostart (`~/.config/autostart/agy-token.desktop`).
-5. Configure systemd user service (`antigravity-token-tracker.service`).
+4. Configure, enable, and start the systemd user service (`antigravity-token-tracker.service`), or configure desktop autostart on non-systemd environments.
+5. Launch the top-bar tray indicator immediately in the background.
 
 > [!TIP]
 > Ensure `~/.local/bin` is in your `PATH` (typically standard on modern Linux). If `agy-token` is not found, add `export PATH="$HOME/.local/bin:$PATH"` to your `~/.bashrc` or `~/.zshrc`.
 
-### 2. Manual Build & Install (Alternative)
+### 2. Managing the Background Service & Tray Daemon
+The installer automatically starts the background service. You can inspect or manage it with standard systemd user commands:
+
+```bash
+# Check service and tray status:
+systemctl --user status antigravity-token-tracker.service
+
+# View live updating service logs:
+journalctl --user -u antigravity-token-tracker.service -f
+
+# Restart background service (e.g. after updating binary or config):
+systemctl --user restart antigravity-token-tracker.service
+
+# Stop and disable background service:
+systemctl --user disable --now antigravity-token-tracker.service
+```
+
+### 3. Manual Build & Install (Alternative)
 If you prefer building and installing manually:
 ```bash
 # 1. Compile release binary
@@ -81,11 +98,8 @@ chmod +x ~/.local/bin/agy-token
 
 # 3. Sync initial account
 agy-token sync
-```
 
-### 3. Background Notifications (Systemd Service)
-To receive native desktop notifications (`notify-send`) when tokens exhaust or when the weekly quota refreshes to 100%:
-```bash
+# 4. Enable and start background tray service
 systemctl --user daemon-reload
 systemctl --user enable --now antigravity-token-tracker.service
 ```
@@ -136,14 +150,21 @@ systemctl --user enable --now antigravity-token-tracker.service
 ```
 
 ### 5. Native Linux Top-Bar System Tray Applet
-Launch the top panel indicator directly:
+Launch the top panel indicator directly in the terminal (foreground mode for interactive testing):
 ```bash
 agy-token tray
 ```
 Features:
-- Live dynamic icon with color-coded quota gauge.
-- Click to view full account breakdown, switch accounts in 1-click, and access the web dashboard.
-- Starts automatically on desktop login via `~/.config/autostart/`.
+- **Zero-Latency D-Bus Registration**: Connects to the desktop's StatusNotifierWatcher immediately on launch without network blocking.
+- **High-Contrast Quota Gauge**: Sharp, auto-scaling color-coded progress ring (Green > 50%, Blue 25–50%, Yellow 10–25%, Red <= 10%) with crisp visibility on dark top panels.
+- **1-Click Dropdown Menu**: View active session status, hot-swap accounts, toggle IP killswitch shield, or open the browser dashboard.
+- **Singleton Process Lock**: Enforces a single running indicator instance via `~/.config/antigravity-token-tracker/tray.lock` to prevent duplicate tray icons and background resource leaks.
+
+> [!NOTE]
+> **Desktop Environment Support**:
+> - **Ubuntu (GNOME)**: Supported out of the box via Ubuntu's preinstalled `ubuntu-appindicators` extension.
+> - **Vanilla GNOME (Fedora / Arch / Debian)**: Requires the official [AppIndicator and KStatusNotifierItem Support](https://extensions.gnome.org/extension/615/appindicator-support/) GNOME Shell extension.
+> - **KDE Plasma / XFCE / Cinnamon / Sway / i3**: Natively supported via the standard FreeDesktop StatusNotifierItem (SNI) protocol.
 
 ### 6. Multi-Account Management
 ```bash
@@ -232,6 +253,52 @@ agy-token shield allow US,DE,GB,NL,CA
 
 # Test emergency termination manually:
 agy-token shield trigger
+```
+
+---
+
+## 🔧 System Tray & Service Troubleshooting
+
+### 1. "Why didn't the tray show up after installing?"
+- **Verify the service status**:
+  ```bash
+  systemctl --user status antigravity-token-tracker.service
+  ```
+  If it shows `inactive (dead)`, enable and start it:
+  ```bash
+  systemctl --user enable --now antigravity-token-tracker.service
+  ```
+- **Verify GNOME AppIndicator extension**:
+  On GNOME Shell (Ubuntu, Fedora, Debian, Arch), verify that the StatusNotifier / AppIndicator extension is active:
+  ```bash
+  gnome-extensions list --enabled | grep appindicator
+  ```
+  If not enabled:
+  ```bash
+  gnome-extensions enable ubuntu-appindicators@ubuntu.com
+  # Or on Fedora/Arch: gnome-extensions enable appindicatorsupport@rgcjonas.gmail.com
+  ```
+
+### 2. "Why do I see 'Another tray indicator instance is already active (PID ...)'?"
+The applet strictly enforces a single instance via an exclusive lockfile at `~/.config/antigravity-token-tracker/tray.lock` to avoid duplicate tray icons.
+If an instance is already running (e.g. from systemd or autostart):
+- Inspect running processes:
+  ```bash
+  pgrep -fl agy-token
+  ```
+- Restart the managed background service:
+  ```bash
+  systemctl --user restart antigravity-token-tracker.service
+  ```
+- Or kill any orphan tray processes:
+  ```bash
+  pkill -f "agy-token tray"
+  ```
+
+### 3. "How do I cleanly uninstall?"
+To stop all services and remove the binary:
+```bash
+./uninstall.sh
 ```
 
 ---
