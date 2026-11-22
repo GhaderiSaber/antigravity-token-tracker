@@ -31,3 +31,10 @@ pub struct UserInfo {
     #[serde(default)]
     pub picture: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct KeyringTokenRecord {
+    pub email: String,
+    pub data: serde_json::Value,
+    pub raw_secret: String,
+}

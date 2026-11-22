@@ -64,6 +64,14 @@ pub fn save_shield_config(config_dir: &Path, cfg: &ShieldConfig) -> std::io::Res
     Ok(())
 }
 
+pub fn enable_shield(config_dir: &Path) -> std::io::Result<ShieldConfig> {
+    set_shield_enabled(config_dir, true)
+}
+
+pub fn disable_shield(config_dir: &Path) -> std::io::Result<ShieldConfig> {
+    set_shield_enabled(config_dir, false)
+}
+
 pub fn set_shield_enabled(config_dir: &Path, enabled: bool) -> std::io::Result<ShieldConfig> {
     let mut cfg = load_shield_config(config_dir);
     cfg.enabled = enabled;
@@ -71,7 +79,7 @@ pub fn set_shield_enabled(config_dir: &Path, enabled: bool) -> std::io::Result<S
     Ok(cfg)
 }
 
-pub fn get_running_antigravity_pids() -> Vec<i32> {
+pub fn running_antigravity_pids() -> Vec<i32> {
     let mut s = System::new_with_specifics(
         RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing()),
     );
@@ -113,8 +121,13 @@ pub fn get_running_antigravity_pids() -> Vec<i32> {
     pids
 }
 
+#[inline]
+pub fn get_running_antigravity_pids() -> Vec<i32> {
+    running_antigravity_pids()
+}
+
 pub fn kill_antigravity_processes(force: bool) -> (usize, Vec<i32>) {
-    let pids = get_running_antigravity_pids();
+    let pids = running_antigravity_pids();
     if pids.is_empty() {
         return (0, Vec::new());
     }

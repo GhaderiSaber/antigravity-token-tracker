@@ -1,5 +1,5 @@
 use super::burnrate::default_history_file;
-pub use super::models::AccountQuotaResult;
+pub use super::models::{AccountQuotaResult, QuotaRefreshPolicy};
 use crate::auth::{
     discover_antigravity_desktop_app, discover_antigravity_ide, ensure_valid_token,
     fetch_quota_from_desktop_app,
@@ -25,12 +25,13 @@ static QUOTA_CACHE: LazyLock<Mutex<HashMap<String, (f64, AccountQuotaResult)>>> 
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub fn clear_quota_cache() {
-    if let Ok(mut cache) = QUOTA_CACHE.lock() {
-        cache.clear();
-    }
+    QUOTA_CACHE
+        .lock()
+        .expect("quota cache lock poisoned")
+        .clear();
 }
 
-pub fn get_historical_quota(email: &str) -> Option<QuotaSnapshot> {
+pub fn historical_quota(email: &str) -> Option<QuotaSnapshot> {
     let history_file = default_history_file();
     if !history_file.is_file() {
         return None;
@@ -117,6 +118,11 @@ pub fn get_historical_quota(email: &str) -> Option<QuotaSnapshot> {
         is_gemini_exhausted: None,
         is_3p_exhausted: None,
     })
+}
+
+#[inline]
+pub fn get_historical_quota(email: &str) -> Option<QuotaSnapshot> {
+    historical_quota(email)
 }
 
 pub fn parse_quota_summary(quota_summary_data: &Value) -> Vec<QuotaGroup> {
@@ -240,17 +246,19 @@ pub fn parse_models_quota(models_data: &Value) -> Vec<ModelQuota> {
 
 pub async fn fetch_account_quota(
     account: &mut AccountProfile,
-    force_refresh: bool,
+    policy: impl Into<QuotaRefreshPolicy>,
 ) -> AccountQuotaResult {
+    let force_refresh = policy.into().is_force_refresh();
     let email = account.email.trim().to_lowercase();
     let now = chrono::Utc::now().timestamp_millis() as f64 / 1000.0;
 
-    if !force_refresh
-        && let Ok(cache) = QUOTA_CACHE.lock()
-        && let Some((cached_time, cached_data)) = cache.get(&email)
-        && now - cached_time < CACHE_TTL_SECONDS
-    {
-        return cached_data.clone();
+    if !force_refresh {
+        let cache = QUOTA_CACHE.lock().expect("quota cache lock poisoned");
+        if let Some((cached_time, cached_data)) = cache.get(&email)
+            && now - cached_time < CACHE_TTL_SECONDS
+        {
+            return cached_data.clone();
+        }
     }
 
     let mut quota_summary_data: Option<Value> = None;
@@ -328,7 +336,7 @@ pub async fn fetch_account_quota(
         // Fallback to persistent last-known quota if available
         let mut last_known = account.last_known_quota.clone();
         if last_known.as_ref().is_none_or(|k| k.groups.is_empty())
-            && let Some(hist) = get_historical_quota(&email)
+            && let Some(hist) = historical_quota(&email)
         {
             account.last_known_quota = Some(hist.clone());
             let _ = upsert_account(account);
@@ -350,9 +358,10 @@ pub async fn fetch_account_quota(
                 is_cached: true,
                 error: None,
             };
-            if let Ok(mut cache) = QUOTA_CACHE.lock() {
-                cache.insert(email, (now, result.clone()));
-            }
+            QUOTA_CACHE
+                .lock()
+                .expect("quota cache lock poisoned")
+                .insert(email, (now, result.clone()));
             return result;
         }
 
@@ -399,14 +408,18 @@ pub async fn fetch_account_quota(
     });
     let _ = upsert_account(account);
 
-    if let Ok(mut cache) = QUOTA_CACHE.lock() {
-        cache.insert(email, (now, result.clone()));
-    }
+    QUOTA_CACHE
+        .lock()
+        .expect("quota cache lock poisoned")
+        .insert(email, (now, result.clone()));
 
     result
 }
 
-pub async fn fetch_all_accounts_quota(force_refresh: bool) -> HashMap<String, AccountQuotaResult> {
+pub async fn fetch_all_accounts_quota(
+    policy: impl Into<QuotaRefreshPolicy>,
+) -> HashMap<String, AccountQuotaResult> {
+    let force_refresh = policy.into().is_force_refresh();
     let mut registry = load_accounts().unwrap_or_default();
     let mut results = HashMap::new();
 

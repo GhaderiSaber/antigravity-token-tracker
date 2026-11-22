@@ -35,7 +35,7 @@ pub fn save_failover_state(state: &FailoverState) -> std::io::Result<()> {
     fs::write(path, content)
 }
 
-pub fn get_account_primary_quota(q: &AccountQuotaResult) -> (f64, bool) {
+pub fn account_primary_quota(q: &AccountQuotaResult) -> (f64, bool) {
     let mut gemini_pct = None;
     let mut first_pct = None;
     let mut is_gemini_exh = false;
@@ -60,7 +60,12 @@ pub fn get_account_primary_quota(q: &AccountQuotaResult) -> (f64, bool) {
     (final_pct, is_exhausted)
 }
 
-pub fn get_active_sessions(
+#[inline]
+pub fn get_account_primary_quota(q: &AccountQuotaResult) -> (f64, bool) {
+    account_primary_quota(q)
+}
+
+pub fn active_sessions(
     analyzed_quotas: &HashMap<String, AccountQuotaResult>,
 ) -> HashMap<String, (String, AccountQuotaResult)> {
     let mut sessions = HashMap::new();
@@ -75,7 +80,14 @@ pub fn get_active_sessions(
     sessions
 }
 
-pub fn get_active_account(
+#[inline]
+pub fn get_active_sessions(
+    analyzed_quotas: &HashMap<String, AccountQuotaResult>,
+) -> HashMap<String, (String, AccountQuotaResult)> {
+    active_sessions(analyzed_quotas)
+}
+
+pub fn active_account(
     analyzed_quotas: &HashMap<String, AccountQuotaResult>,
 ) -> Option<(String, AccountQuotaResult)> {
     for (email, q) in analyzed_quotas {
@@ -89,6 +101,13 @@ pub fn get_active_account(
         }
     }
     None
+}
+
+#[inline]
+pub fn get_active_account(
+    analyzed_quotas: &HashMap<String, AccountQuotaResult>,
+) -> Option<(String, AccountQuotaResult)> {
+    active_account(analyzed_quotas)
 }
 
 pub fn find_best_failover_candidate(
@@ -126,22 +145,20 @@ pub fn find_best_failover_candidate(
     candidates.into_iter().max_by(|a, b| a.1.total_cmp(&b.1))
 }
 
-pub fn get_failover_status(
-    analyzed_quotas: &HashMap<String, AccountQuotaResult>,
-) -> serde_json::Value {
-    let active_pair = get_active_account(analyzed_quotas);
+pub fn failover_status(analyzed_quotas: &HashMap<String, AccountQuotaResult>) -> serde_json::Value {
+    let active_pair = active_account(analyzed_quotas);
     let active_email = active_pair.as_ref().map(|(e, _)| e.clone());
     let mut active_pct = 0.0;
     let mut is_active_exhausted = false;
 
     if let Some((_, ref q)) = active_pair {
-        let (pct, exh) = get_account_primary_quota(q);
+        let (pct, exh) = account_primary_quota(q);
         active_pct = pct;
         is_active_exhausted = exh;
     }
 
-    let active_sessions = get_active_sessions(analyzed_quotas);
-    let active_emails: Vec<String> = active_sessions.values().map(|(e, _)| e.clone()).collect();
+    let sessions = active_sessions(analyzed_quotas);
+    let active_emails: Vec<String> = sessions.values().map(|(e, _)| e.clone()).collect();
     let best_candidate = find_best_failover_candidate(
         analyzed_quotas,
         active_email.as_deref(),
@@ -162,6 +179,13 @@ pub fn get_failover_status(
     })
 }
 
+#[inline]
+pub fn get_failover_status(
+    analyzed_quotas: &HashMap<String, AccountQuotaResult>,
+) -> serde_json::Value {
+    failover_status(analyzed_quotas)
+}
+
 pub async fn evaluate_and_execute_failover(
     analyzed_quotas: &HashMap<String, AccountQuotaResult>,
     threshold: f64,
@@ -172,7 +196,7 @@ pub async fn evaluate_and_execute_failover(
     let mut state = load_failover_state();
     let now = chrono::Utc::now().timestamp_millis() as f64 / 1000.0;
 
-    let active_pair = get_active_account(analyzed_quotas);
+    let active_pair = active_account(analyzed_quotas);
     let Some((active_email, active_q)) = active_pair else {
         return FailoverDecision {
             triggered: false,
@@ -186,7 +210,7 @@ pub async fn evaluate_and_execute_failover(
         };
     };
 
-    let (active_pct, is_exhausted) = get_account_primary_quota(&active_q);
+    let (active_pct, is_exhausted) = account_primary_quota(&active_q);
     if active_pct > threshold && !is_exhausted {
         return FailoverDecision {
             triggered: false,

@@ -108,10 +108,15 @@ impl StorageManager {
         Ok(())
     }
 
-    pub fn get_account(&self, email: &str) -> Result<Option<AccountProfile>> {
+    pub fn account(&self, email: &str) -> Result<Option<AccountProfile>> {
         let registry = self.load_accounts()?;
         let key = email.trim().to_lowercase();
         Ok(registry.accounts.get(&key).cloned())
+    }
+
+    #[inline]
+    pub fn get_account(&self, email: &str) -> Result<Option<AccountProfile>> {
+        self.account(email)
     }
 
     pub fn list_accounts(&self) -> Result<Vec<AccountProfile>> {
@@ -227,8 +232,13 @@ pub fn list_accounts() -> Result<Vec<AccountProfile>> {
     StorageManager::default().list_accounts()
 }
 
+pub fn account(email: &str) -> Result<Option<AccountProfile>> {
+    StorageManager::default().account(email)
+}
+
+#[inline]
 pub fn get_account(email: &str) -> Result<Option<AccountProfile>> {
-    StorageManager::default().get_account(email)
+    account(email)
 }
 
 pub fn remove_account(identifier: &str) -> Result<Option<AccountProfile>> {

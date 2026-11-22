@@ -292,4 +292,56 @@ mod tests {
             other => panic!("Expected AccountNotFound, got: {other:?}"),
         }
     }
+
+    #[test]
+    fn test_switch_outcome_methods_display_and_serde() {
+        let active = SwitchOutcome::AlreadyActive {
+            email: "active@example.com".to_string(),
+        };
+        assert!(active.is_already_active());
+        assert!(!active.is_switched());
+        assert_eq!(active.target_email(), "active@example.com");
+        assert_eq!(active.from_email(), None);
+        assert_eq!(
+            active.to_string(),
+            "Account 'active@example.com' is already the active session."
+        );
+
+        let switched = SwitchOutcome::Switched {
+            from: Some("old@example.com".to_string()),
+            to: "new@example.com".to_string(),
+            surface: SwitchSurface::Both,
+            restarted: true,
+        };
+        assert!(!switched.is_already_active());
+        assert!(switched.is_switched());
+        assert_eq!(switched.target_email(), "new@example.com");
+        assert_eq!(switched.from_email(), Some("old@example.com"));
+        assert_eq!(
+            switched.to_string(),
+            "Successfully switched active session to 'new@example.com'."
+        );
+
+        // Serde roundtrip
+        let json = serde_json::to_string(&switched).unwrap();
+        assert!(json.contains("\"status\":\"switched\""));
+        assert!(json.contains("\"to\":\"new@example.com\""));
+        let parsed: SwitchOutcome = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, switched);
+
+        // Conversion to SwitchResult
+        let result: SwitchResult = switched.into();
+        assert!(result.success);
+        assert_eq!(result.to_email, "new@example.com");
+        assert_eq!(result.from_email, Some("old@example.com".to_string()));
+    }
+
+    #[test]
+    fn test_session_restore_error_display() {
+        let err = SessionRestoreError::MissingCredentials("missing@example.com".to_string());
+        assert_eq!(
+            err.to_string(),
+            "No credentials, saved session files, or refresh tokens found for 'missing@example.com'"
+        );
+    }
 }

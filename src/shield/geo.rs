@@ -1,4 +1,4 @@
-use crate::shield::models::EgressGeo;
+use crate::shield::models::{EgressCachePolicy, EgressGeo, IpDetail};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::{LazyLock, Mutex};
@@ -25,7 +25,7 @@ static GEO_CACHE: Mutex<GeoCache> = Mutex::new(GeoCache {
     timestamp: 0.0,
 });
 
-pub fn get_flag_emoji(country_code: &str) -> String {
+pub fn flag_emoji(country_code: &str) -> String {
     let code = country_code.trim().to_uppercase();
     if code.len() != 2 {
         return "🌐".to_string();
@@ -41,14 +41,20 @@ pub fn get_flag_emoji(country_code: &str) -> String {
     }
 }
 
+#[inline]
+pub fn get_flag_emoji(country_code: &str) -> String {
+    flag_emoji(country_code)
+}
+
 pub fn is_restricted_country(country_code: &str) -> bool {
     let upper = country_code.trim().to_uppercase();
     RESTRICTED_SET.contains(upper.as_str())
 }
 
-pub fn format_ip_summary(geo: &EgressGeo, include_ip: bool) -> String {
+pub fn format_ip_summary(geo: &EgressGeo, detail: impl Into<IpDetail>) -> String {
+    let include_ip = detail.into().includes_ip();
     let flag = if geo.flag.is_empty() {
-        get_flag_emoji(&geo.country_code)
+        flag_emoji(&geo.country_code)
     } else {
         geo.flag.clone()
     };
@@ -188,11 +194,12 @@ pub async fn query_ip_geo() -> Option<EgressGeo> {
     None
 }
 
-pub async fn get_ip_geo(force_refresh: bool) -> EgressGeo {
+pub async fn ip_geo(policy: impl Into<EgressCachePolicy>) -> EgressGeo {
+    let force_refresh = policy.into().is_force_refresh();
     let now = now_epoch();
 
     if !force_refresh {
-        let cache = GEO_CACHE.lock().unwrap();
+        let cache = GEO_CACHE.lock().expect("geo cache lock poisoned");
         if let Some(cached) = &cache.data
             && now - cache.timestamp < CACHE_TTL_SECS
         {
@@ -201,7 +208,7 @@ pub async fn get_ip_geo(force_refresh: bool) -> EgressGeo {
     }
 
     if let Some(res) = query_ip_geo().await {
-        let mut cache = GEO_CACHE.lock().unwrap();
+        let mut cache = GEO_CACHE.lock().expect("geo cache lock poisoned");
         cache.data = Some(res.clone());
         cache.timestamp = now;
         return res;
@@ -209,7 +216,7 @@ pub async fn get_ip_geo(force_refresh: bool) -> EgressGeo {
 
     // Return cached if network failed
     {
-        let cache = GEO_CACHE.lock().unwrap();
+        let cache = GEO_CACHE.lock().expect("geo cache lock poisoned");
         if let Some(cached) = &cache.data {
             return cached.clone();
         }
@@ -229,4 +236,9 @@ pub async fn get_ip_geo(force_refresh: bool) -> EgressGeo {
         checked_at: now,
         summary: "🌐 Egress IP Checking...".into(),
     }
+}
+
+#[inline]
+pub async fn get_ip_geo(policy: impl Into<EgressCachePolicy>) -> EgressGeo {
+    ip_geo(policy).await
 }

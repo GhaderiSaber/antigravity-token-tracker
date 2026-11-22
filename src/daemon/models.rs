@@ -41,16 +41,37 @@ pub struct FailoverDecision {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum DiagnosticStatus {
+    #[default]
+    Pass,
+    Warn,
+    Fail,
+    Info,
+}
+
+impl std::fmt::Display for DiagnosticStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Pass => write!(f, "PASS"),
+            Self::Warn => write!(f, "WARN"),
+            Self::Fail => write!(f, "FAIL"),
+            Self::Info => write!(f, "INFO"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DiagnosticItem {
     pub component: String,
-    pub status: String, // "PASS", "WARN", "FAIL"
+    pub status: DiagnosticStatus,
     pub details: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DoctorReport {
     pub items: Vec<DiagnosticItem>,
-    pub overall_status: String, // "PASS", "WARN", "FAIL"
+    pub overall_status: DiagnosticStatus,
     pub timestamp: f64,
 }

@@ -358,7 +358,7 @@ async fn switch_handler(
         Err(err) => {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(json!({"success": false, "error": err})),
+                Json(json!({"success": false, "error": err.to_string()})),
             )
                 .into_response();
         }
@@ -380,7 +380,7 @@ async fn switch_handler(
             );
             (
                 StatusCode::OK,
-                Json(json!({"success": true, "message": msg})),
+                Json(json!({"success": true, "message": msg.to_string(), "outcome": msg})),
             )
                 .into_response()
         }
@@ -415,7 +415,7 @@ async fn switch_best_handler() -> Response {
             );
             (
                 StatusCode::OK,
-                Json(json!({"success": true, "message": msg, "target": target})),
+                Json(json!({"success": true, "message": msg.to_string(), "outcome": msg, "target": target})),
             )
                 .into_response()
         }
@@ -459,7 +459,7 @@ async fn sync_surfaces_handler(Query(params): Query<SyncSurfacesParams>) -> Resp
             broadcast_event("surfaces_synced", json!({"target": target}));
             (
                 StatusCode::OK,
-                Json(json!({"success": true, "message": msg})),
+                Json(json!({"success": true, "message": msg.to_string(), "outcome": msg})),
             )
                 .into_response()
         }

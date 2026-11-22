@@ -12,7 +12,7 @@ pub struct StatusBadge {
     pub style: &'static str,
 }
 
-pub fn get_status_badge(remaining_fraction: f64) -> StatusBadge {
+pub fn status_badge(remaining_fraction: f64) -> StatusBadge {
     let pct = remaining_fraction * 100.0;
     if pct <= 1.0 {
         StatusBadge {
@@ -40,6 +40,11 @@ pub fn get_status_badge(remaining_fraction: f64) -> StatusBadge {
             style: "bold green",
         }
     }
+}
+
+#[inline]
+pub fn get_status_badge(remaining_fraction: f64) -> StatusBadge {
+    status_badge(remaining_fraction)
 }
 
 pub fn parse_iso_utc(ts_str: &str) -> Option<DateTime<Utc>> {
@@ -99,7 +104,7 @@ pub fn analyze_account_lifecycle(quota: &QuotaSnapshot, now: DateTime<Utc>) -> Q
                 .remaining_fraction
                 .unwrap_or_else(|| weekly.remaining_percent.map_or(0.0, |p| p / 100.0));
             let (cd_str, secs) = format_countdown(weekly.reset_time.as_deref().unwrap_or(""), now);
-            let badge = get_status_badge(frac);
+            let badge = status_badge(frac);
             let is_exhausted = frac <= 0.01;
 
             if group_name.to_lowercase().contains("gemini") {
@@ -130,7 +135,7 @@ pub fn analyze_account_lifecycle(quota: &QuotaSnapshot, now: DateTime<Utc>) -> Q
                 .unwrap_or_else(|| five_hour.remaining_percent.map_or(0.0, |p| p / 100.0));
             let (cd_str, secs) =
                 format_countdown(five_hour.reset_time.as_deref().unwrap_or(""), now);
-            let badge = get_status_badge(frac);
+            let badge = status_badge(frac);
             let is_exhausted = frac <= 0.01;
 
             QuotaBucket {

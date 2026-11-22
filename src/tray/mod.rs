@@ -168,7 +168,7 @@ pub async fn run_tray(
                 let b_cfg = crate::balancer::balancer::load_balancer_config();
 
                 {
-                    let mut st = shared_state.lock().unwrap();
+                    let mut st = shared_state.lock().expect("tray shared state lock poisoned");
                     st.min_pct = cur_min_pct;
                     st.is_exhausted = cur_exhausted;
                     st.active_summary = summary;

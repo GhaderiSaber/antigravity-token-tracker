@@ -28,8 +28,8 @@ pub async fn sync_from_antigravity(
         let mut access_tok = existing.access_token.clone().unwrap_or_default();
         let mut refresh_tok = existing.refresh_token.clone().unwrap_or_default();
 
-        if let Some((_, kr_data, _)) = get_desktop_keyring_token().await
-            && let Some(tok_obj) = kr_data.get("token")
+        if let Some(kr) = get_desktop_keyring_token().await
+            && let Some(tok_obj) = kr.data.get("token")
         {
             if let Some(acc) = tok_obj.get("access_token").and_then(|v| v.as_str()) {
                 access_tok = acc.to_string();

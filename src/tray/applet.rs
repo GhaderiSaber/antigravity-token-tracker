@@ -28,7 +28,7 @@ impl Tray for AntigravityTray {
     }
 
     fn title(&self) -> String {
-        let st = self.state.lock().unwrap();
+        let st = self.state.lock().expect("tray state lock poisoned");
         if st.is_exhausted {
             "Antigravity: Quota Exhausted".into()
         } else {
@@ -37,7 +37,7 @@ impl Tray for AntigravityTray {
     }
 
     fn icon_name(&self) -> String {
-        let st = self.state.lock().unwrap();
+        let st = self.state.lock().expect("tray state lock poisoned");
         st.icon_name.clone()
     }
 
@@ -48,7 +48,7 @@ impl Tray for AntigravityTray {
     }
 
     fn icon_pixmap(&self) -> Vec<Icon> {
-        let st = self.state.lock().unwrap();
+        let st = self.state.lock().expect("tray state lock poisoned");
         vec![Icon {
             width: st.icon.width,
             height: st.icon.height,
@@ -57,7 +57,7 @@ impl Tray for AntigravityTray {
     }
 
     fn tool_tip(&self) -> ToolTip {
-        let st = self.state.lock().unwrap();
+        let st = self.state.lock().expect("tray state lock poisoned");
         ToolTip {
             title: "Antigravity Token Tracker".into(),
             description: st.active_summary.clone(),
@@ -75,7 +75,7 @@ impl Tray for AntigravityTray {
     }
 
     fn menu(&self) -> Vec<MenuItem<Self>> {
-        let st = self.state.lock().unwrap();
+        let st = self.state.lock().expect("tray state lock poisoned");
         let mut items = Vec::new();
 
         // 1. Open Web Dashboard
@@ -130,7 +130,7 @@ impl Tray for AntigravityTray {
                             )
                             .await
                             {
-                                Ok(m) => (true, m),
+                                Ok(m) => (true, m.to_string()),
                                 Err(e) => (false, e.to_string()),
                             };
                             let title = if ok {
@@ -235,7 +235,7 @@ impl Tray for AntigravityTray {
                             )
                             .await
                             {
-                                Ok(m) => (true, m),
+                                Ok(m) => (true, m.to_string()),
                                 Err(e) => (false, e.to_string()),
                             };
                             let title = if ok {

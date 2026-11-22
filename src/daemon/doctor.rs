@@ -1,4 +1,4 @@
-use super::models::{DiagnosticItem, DoctorReport};
+use super::models::{DiagnosticItem, DiagnosticStatus, DoctorReport};
 use crate::auth::{discover_antigravity_desktop_app, discover_antigravity_ide};
 use crate::balancer::has_account_credentials;
 use crate::storage::{default_config_dir, load_accounts};
@@ -25,14 +25,14 @@ pub async fn run_doctor_suite() -> DoctorReport {
     if keyring_ok {
         items.push(DiagnosticItem {
             component: "Linux Secret Service".into(),
-            status: "PASS".into(),
+            status: DiagnosticStatus::Pass,
             details: "org.freedesktop.secrets accessible via D-Bus; keyring ready".into(),
         });
     } else {
         has_warn = true;
         items.push(DiagnosticItem {
             component: "Linux Secret Service".into(),
-            status: "WARN".into(),
+            status: DiagnosticStatus::Warn,
             details: "Could not connect to org.freedesktop.secrets; falling back to SQLite tokens"
                 .into(),
         });
@@ -56,14 +56,14 @@ pub async fn run_doctor_suite() -> DoctorReport {
     if google_ok {
         items.push(DiagnosticItem {
             component: "Google CloudCode API".into(),
-            status: "PASS".into(),
+            status: DiagnosticStatus::Pass,
             details: "Network connection to daily-cloudcode-pa.googleapis.com verified".into(),
         });
     } else {
         has_warn = true;
         items.push(DiagnosticItem {
             component: "Google CloudCode API".into(),
-            status: "WARN".into(),
+            status: DiagnosticStatus::Warn,
             details: "Failed to connect to Google CloudCode API; offline or blocked".into(),
         });
     }
@@ -78,14 +78,14 @@ pub async fn run_doctor_suite() -> DoctorReport {
     if geo_ok {
         items.push(DiagnosticItem {
             component: "IP Geolocation API".into(),
-            status: "PASS".into(),
+            status: DiagnosticStatus::Pass,
             details: "https://ipwho.is reachable for Geo-Shield egress verification".into(),
         });
     } else {
         has_warn = true;
         items.push(DiagnosticItem {
             component: "IP Geolocation API".into(),
-            status: "WARN".into(),
+            status: DiagnosticStatus::Warn,
             details: "Geolocation API unreachable; Geo-Shield cannot verify egress IP".into(),
         });
     }
@@ -97,7 +97,7 @@ pub async fn run_doctor_suite() -> DoctorReport {
     if let Some(d) = desktop {
         items.push(DiagnosticItem {
             component: "Antigravity Desktop App".into(),
-            status: "PASS".into(),
+            status: DiagnosticStatus::Pass,
             details: format!(
                 "Running (email: {}, port: {})",
                 d.email,
@@ -107,7 +107,7 @@ pub async fn run_doctor_suite() -> DoctorReport {
     } else {
         items.push(DiagnosticItem {
             component: "Antigravity Desktop App".into(),
-            status: "INFO".into(),
+            status: DiagnosticStatus::Info,
             details: "Not currently running".into(),
         });
     }
@@ -115,7 +115,7 @@ pub async fn run_doctor_suite() -> DoctorReport {
     if let Some(i) = ide {
         items.push(DiagnosticItem {
             component: "Antigravity IDE".into(),
-            status: "PASS".into(),
+            status: DiagnosticStatus::Pass,
             details: format!(
                 "Running (email: {}, port: {})",
                 i.email,
@@ -125,7 +125,7 @@ pub async fn run_doctor_suite() -> DoctorReport {
     } else {
         items.push(DiagnosticItem {
             component: "Antigravity IDE".into(),
-            status: "INFO".into(),
+            status: DiagnosticStatus::Info,
             details: "Not currently running".into(),
         });
     }
@@ -145,13 +145,13 @@ pub async fn run_doctor_suite() -> DoctorReport {
                 has_warn = true;
                 items.push(DiagnosticItem {
                     component: "Registered Accounts".into(),
-                    status: "WARN".into(),
+                    status: DiagnosticStatus::Warn,
                     details: "No registered accounts found. Run `agy-token sync` to import.".into(),
                 });
             } else {
                 items.push(DiagnosticItem {
                     component: "Registered Accounts".into(),
-                    status: "PASS".into(),
+                    status: DiagnosticStatus::Pass,
                     details: format!(
                         "{total} registered accounts ({ready_count} switchable with credentials)"
                     ),
@@ -162,7 +162,7 @@ pub async fn run_doctor_suite() -> DoctorReport {
             has_fail = true;
             items.push(DiagnosticItem {
                 component: "Accounts Storage".into(),
-                status: "FAIL".into(),
+                status: DiagnosticStatus::Fail,
                 details: format!("Failed reading accounts.json: {e}"),
             });
         }
@@ -177,9 +177,9 @@ pub async fn run_doctor_suite() -> DoctorReport {
     items.push(DiagnosticItem {
         component: "Geo-Shield Protection".into(),
         status: if is_allowed {
-            "PASS".into()
+            DiagnosticStatus::Pass
         } else {
-            "FAIL".into()
+            DiagnosticStatus::Fail
         },
         details: format!(
             "Shield: {}, Egress IP: {} ({}), Policy: {}",
@@ -191,16 +191,16 @@ pub async fn run_doctor_suite() -> DoctorReport {
     });
 
     let overall = if has_fail {
-        "FAIL"
+        DiagnosticStatus::Fail
     } else if has_warn {
-        "WARN"
+        DiagnosticStatus::Warn
     } else {
-        "PASS"
+        DiagnosticStatus::Pass
     };
 
     DoctorReport {
         items,
-        overall_status: overall.into(),
+        overall_status: overall,
         timestamp: chrono::Utc::now().timestamp_millis() as f64 / 1000.0,
     }
 }

@@ -1,4 +1,4 @@
-use super::models::SessionSnapshotMeta;
+use super::models::{RestartProcess, SessionSnapshotMeta, SnapshotResult};
 use crate::auth::get_desktop_keyring_token;
 use crate::storage::models::AccountsRegistry;
 use crate::storage::{load_accounts, save_accounts};
@@ -9,6 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
+use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 
 pub fn default_sessions_dir() -> PathBuf {
     dirs::config_dir().map_or_else(
@@ -52,24 +53,34 @@ pub fn ensure_sessions_dir() {
     }
 }
 
-pub fn get_account_session_dir(email: &str, create: bool) -> PathBuf {
+pub fn account_session_dir(email: &str) -> PathBuf {
     let clean = email.trim().to_lowercase();
-    let p = default_sessions_dir().join(clean);
-    if create {
-        ensure_sessions_dir();
-        let _ = fs::create_dir_all(&p);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&p, fs::Permissions::from_mode(0o700));
-        }
+    default_sessions_dir().join(clean)
+}
+
+pub fn ensure_account_session_dir(email: &str) -> PathBuf {
+    let p = account_session_dir(email);
+    ensure_sessions_dir();
+    let _ = fs::create_dir_all(&p);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&p, fs::Permissions::from_mode(0o700));
     }
     p
 }
 
+pub fn get_account_session_dir(email: &str, create: bool) -> PathBuf {
+    if create {
+        ensure_account_session_dir(email)
+    } else {
+        account_session_dir(email)
+    }
+}
+
 pub fn has_account_credentials(email: &str, registered: Option<&AccountsRegistry>) -> bool {
     let clean = email.trim().to_lowercase();
-    let s_dir = get_account_session_dir(&clean, false);
+    let s_dir = account_session_dir(&clean);
     if s_dir.is_dir() {
         let has_desktop = s_dir.join("desktop").is_dir();
         let has_keyring = s_dir.join("keyring_token.json").is_file();
@@ -249,7 +260,7 @@ pub async fn snapshot_desktop_session(email: &str) -> bool {
     }
 
     let clean = email.trim().to_lowercase();
-    let target_dir = get_account_session_dir(&clean, true).join("desktop");
+    let target_dir = ensure_account_session_dir(&clean).join("desktop");
     let _ = fs::create_dir_all(&target_dir);
 
     let mut copied_any = false;
@@ -275,14 +286,14 @@ pub async fn snapshot_desktop_session(email: &str) -> bool {
     }
 
     // Keyring snapshot
-    if let Some((k_email, k_data, k_raw)) = get_desktop_keyring_token().await
-        && (k_email.is_empty() || k_email.eq_ignore_ascii_case(&clean))
+    if let Some(record) = get_desktop_keyring_token().await
+        && (record.email.is_empty() || record.email.eq_ignore_ascii_case(&clean))
     {
-        let keyring_file = get_account_session_dir(&clean, false).join("keyring_token.json");
-        if fs::write(&keyring_file, &k_raw).is_ok() {
+        let keyring_file = account_session_dir(&clean).join("keyring_token.json");
+        if fs::write(&keyring_file, &record.raw_secret).is_ok() {
             copied_any = true;
 
-            if let Some(tok) = k_data.get("token")
+            if let Some(tok) = record.data.get("token")
                 && let Ok(mut reg) = load_accounts()
                 && let Some(acc) = reg.accounts.get_mut(&clean)
             {
@@ -299,15 +310,15 @@ pub async fn snapshot_desktop_session(email: &str) -> bool {
 
     // Metadata
     let now = chrono::Utc::now().timestamp_millis() as f64 / 1000.0;
-    let meta_file = get_account_session_dir(&clean, false).join("snapshot_meta.json");
+    let meta_file = account_session_dir(&clean).join("snapshot_meta.json");
     let meta = SessionSnapshotMeta {
         email: clean.clone(),
         snapshotted_at: now,
         has_desktop_session: copied_any,
-        has_keyring_token: get_account_session_dir(&clean, false)
+        has_keyring_token: account_session_dir(&clean)
             .join("keyring_token.json")
             .is_file(),
-        has_ide_session: get_account_session_dir(&clean, false)
+        has_ide_session: account_session_dir(&clean)
             .join("ide_tokens.json")
             .is_file(),
     };
@@ -383,7 +394,7 @@ pub fn snapshot_ide_session(email: &str) -> bool {
         return false;
     }
 
-    let ide_file = get_account_session_dir(&clean, true).join("ide_tokens.json");
+    let ide_file = ensure_account_session_dir(&clean).join("ide_tokens.json");
     if let Ok(content) = serde_json::to_string_pretty(&saved) {
         let _ = fs::write(&ide_file, content);
     }
@@ -403,7 +414,7 @@ pub fn snapshot_ide_session(email: &str) -> bool {
     }
 
     // Synthesize keyring token if missing
-    let keyring_file = get_account_session_dir(&clean, false).join("keyring_token.json");
+    let keyring_file = account_session_dir(&clean).join("keyring_token.json");
     if !keyring_file.is_file()
         && let Some(tokens) = crate::auth::extract_tokens_from_state_db(&ide_db)
         && !tokens.refresh_token.is_empty()
@@ -425,14 +436,12 @@ pub fn snapshot_ide_session(email: &str) -> bool {
 
     // Metadata
     let now = chrono::Utc::now().timestamp_millis() as f64 / 1000.0;
-    let meta_file = get_account_session_dir(&clean, false).join("snapshot_meta.json");
+    let meta_file = account_session_dir(&clean).join("snapshot_meta.json");
     let meta = SessionSnapshotMeta {
         email: clean.clone(),
         snapshotted_at: now,
-        has_desktop_session: get_account_session_dir(&clean, false)
-            .join("desktop")
-            .is_dir(),
-        has_keyring_token: get_account_session_dir(&clean, false)
+        has_desktop_session: account_session_dir(&clean).join("desktop").is_dir(),
+        has_keyring_token: account_session_dir(&clean)
             .join("keyring_token.json")
             .is_file(),
         has_ide_session: true,
@@ -444,17 +453,32 @@ pub fn snapshot_ide_session(email: &str) -> bool {
     true
 }
 
-pub async fn snapshot_account(email: &str) -> (bool, bool) {
+pub async fn snapshot_account(email: &str) -> SnapshotResult {
     let clean = email.trim().to_lowercase();
     let desktop = snapshot_desktop_session(&clean).await;
     let ide = snapshot_ide_session(&clean);
-    (desktop, ide)
+    SnapshotResult {
+        desktop_saved: desktop,
+        ide_saved: ide,
+    }
 }
 
-pub async fn restore_desktop_session(email: &str) -> bool {
+#[derive(Debug, thiserror::Error)]
+pub enum SessionRestoreError {
+    #[error("No credentials, saved session files, or refresh tokens found for '{0}'")]
+    MissingCredentials(String),
+    #[error("I/O error during session restoration: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Failed to parse or serialize session JSON: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("SQLite database error during IDE session restoration: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+}
+
+pub async fn restore_desktop_session(email: &str) -> Result<(), SessionRestoreError> {
     let clean = email.trim().to_lowercase();
-    let source_dir = get_account_session_dir(&clean, false).join("desktop");
-    let keyring_file = get_account_session_dir(&clean, false).join("keyring_token.json");
+    let source_dir = account_session_dir(&clean).join("desktop");
+    let keyring_file = account_session_dir(&clean).join("keyring_token.json");
 
     let has_files = source_dir.is_dir();
     let has_keyring = keyring_file.is_file();
@@ -467,11 +491,11 @@ pub async fn restore_desktop_session(email: &str) -> bool {
         .is_some_and(|r| !r.is_empty());
 
     if !has_files && !has_keyring && !has_refresh_token {
-        return false;
+        return Err(SessionRestoreError::MissingCredentials(clean));
     }
 
     let desktop_dir = default_desktop_config_dir();
-    let _ = fs::create_dir_all(&desktop_dir);
+    fs::create_dir_all(&desktop_dir)?;
 
     if has_files {
         for &f in DESKTOP_FILES_TO_SAVE {
@@ -530,41 +554,30 @@ pub async fn restore_desktop_session(email: &str) -> bool {
         let _ = clear_keyring_secret().await;
     }
 
-    true
+    Ok(())
 }
 
-pub fn restore_ide_session(email: &str) -> bool {
+pub fn restore_ide_session(email: &str) -> Result<(), SessionRestoreError> {
     let clean = email.trim().to_lowercase();
-    let ide_file = get_account_session_dir(&clean, false).join("ide_tokens.json");
+    let ide_file = account_session_dir(&clean).join("ide_tokens.json");
     if !ide_file.is_file() {
-        return false;
+        return Err(SessionRestoreError::MissingCredentials(clean));
     }
 
     let ide_db = default_ide_state_db();
     if let Some(parent) = ide_db.parent() {
-        let _ = fs::create_dir_all(parent);
+        fs::create_dir_all(parent)?;
     }
 
-    let Ok(content) = fs::read_to_string(&ide_file) else {
-        return false;
-    };
-    let Ok(saved) = serde_json::from_str::<HashMap<String, String>>(&content) else {
-        return false;
-    };
+    let content = fs::read_to_string(&ide_file)?;
+    let saved: HashMap<String, String> = serde_json::from_str(&content)?;
 
-    let Ok(conn) = Connection::open(&ide_db) else {
-        return false;
-    };
+    let conn = Connection::open(&ide_db)?;
 
-    if conn
-        .execute(
-            "CREATE TABLE IF NOT EXISTS ItemTable (key TEXT PRIMARY KEY, value TEXT)",
-            [],
-        )
-        .is_err()
-    {
-        return false;
-    }
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS ItemTable (key TEXT PRIMARY KEY, value TEXT)",
+        [],
+    )?;
 
     for (k, v) in saved {
         let _ = conn.execute(
@@ -573,41 +586,78 @@ pub fn restore_ide_session(email: &str) -> bool {
         );
     }
 
-    true
+    Ok(())
 }
 
-pub fn get_antigravity_pids() -> Vec<i32> {
-    let mut pids = Vec::new();
-    let my_pid = std::process::id() as i32;
+#[cfg(unix)]
+fn is_process_alive(pid: i32) -> bool {
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok()
+}
 
-    if let Ok(output) = Command::new("pgrep")
-        .args(["-f", "/snap/antigravity/"])
-        .output()
-    {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        for line in stdout.lines() {
-            if let Ok(pid) = line.trim().parse::<i32>()
-                && pid != my_pid
-            {
-                if let Ok(cmd_bytes) = fs::read(format!("/proc/{pid}/cmdline")) {
-                    let cmd = String::from_utf8_lossy(&cmd_bytes);
-                    if cmd.contains("antigravity-ide") {
-                        continue;
-                    }
-                }
-                pids.push(pid);
-            }
+#[cfg(not(unix))]
+fn is_process_alive(pid: i32) -> bool {
+    Path::new(&format!("/proc/{pid}")).exists()
+}
+
+pub fn antigravity_pids() -> Vec<i32> {
+    let mut s = System::new_with_specifics(
+        RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing()),
+    );
+    s.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+
+    let my_pid = std::process::id() as usize;
+    let mut pids = Vec::new();
+
+    for (pid, process) in s.processes() {
+        let pid_u = pid.as_u32() as usize;
+        if pid_u == my_pid {
+            continue;
+        }
+
+        let name = process.name().to_string_lossy().to_lowercase();
+        let cmd = process
+            .cmd()
+            .iter()
+            .map(|s| s.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        // Ignore our own binaries / trackers
+        if cmd.contains("antigravity-token-tracker") || cmd.contains("agy-token") {
+            continue;
+        }
+
+        // Must not be the IDE (which has its own independent session)
+        if cmd.contains("antigravity-ide") || name.contains("antigravity-ide") {
+            continue;
+        }
+
+        // Match Antigravity desktop app or snap processes
+        let is_desktop = cmd.contains("/snap/antigravity/")
+            || cmd.contains("/antigravity")
+            || name == "antigravity";
+
+        if is_desktop {
+            pids.push(pid.as_u32() as i32);
         }
     }
+
+    pids.sort();
+    pids.dedup();
     pids
 }
 
+#[inline]
+pub fn get_antigravity_pids() -> Vec<i32> {
+    antigravity_pids()
+}
+
 pub fn is_antigravity_running() -> bool {
-    !get_antigravity_pids().is_empty()
+    !antigravity_pids().is_empty()
 }
 
 pub fn stop_antigravity() -> bool {
-    let pids = get_antigravity_pids();
+    let pids = antigravity_pids();
     if !pids.is_empty() {
         for &p in &pids {
             #[cfg(unix)]
@@ -623,7 +673,7 @@ pub fn stop_antigravity() -> bool {
             let remaining: Vec<i32> = pids
                 .iter()
                 .copied()
-                .filter(|&p| Path::new(&format!("/proc/{p}")).exists())
+                .filter(|&p| is_process_alive(p))
                 .collect();
             if remaining.is_empty() {
                 break;
@@ -632,7 +682,7 @@ pub fn stop_antigravity() -> bool {
 
         // Force SIGKILL if needed
         for &p in &pids {
-            if Path::new(&format!("/proc/{p}")).exists() {
+            if is_process_alive(p) {
                 #[cfg(unix)]
                 let _ = nix::sys::signal::kill(
                     nix::unistd::Pid::from_raw(p),
@@ -697,17 +747,74 @@ impl std::fmt::Display for SwitchSurface {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, thiserror::Error)]
+#[error("unknown switch surface: '{0}', expected 'both', 'desktop', or 'ide'")]
+pub struct ParseSwitchSurfaceError(pub String);
+
 impl std::str::FromStr for SwitchSurface {
-    type Err = String;
+    type Err = ParseSwitchSurfaceError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_lowercase().as_str() {
             "both" | "all" => Ok(Self::Both),
             "desktop" | "app" => Ok(Self::Desktop),
             "ide" => Ok(Self::Ide),
-            other => Err(format!(
-                "unknown switch surface: '{other}', expected 'both', 'desktop', or 'ide'"
-            )),
+            other => Err(ParseSwitchSurfaceError(other.to_string())),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum SwitchOutcome {
+    AlreadyActive {
+        email: String,
+    },
+    Switched {
+        from: Option<String>,
+        to: String,
+        surface: SwitchSurface,
+        restarted: bool,
+    },
+}
+
+impl SwitchOutcome {
+    #[must_use]
+    pub fn is_already_active(&self) -> bool {
+        matches!(self, Self::AlreadyActive { .. })
+    }
+
+    #[must_use]
+    pub fn is_switched(&self) -> bool {
+        matches!(self, Self::Switched { .. })
+    }
+
+    #[must_use]
+    pub fn target_email(&self) -> &str {
+        match self {
+            Self::AlreadyActive { email } => email,
+            Self::Switched { to, .. } => to,
+        }
+    }
+
+    #[must_use]
+    pub fn from_email(&self) -> Option<&str> {
+        match self {
+            Self::AlreadyActive { .. } => None,
+            Self::Switched { from, .. } => from.as_deref(),
+        }
+    }
+}
+
+impl std::fmt::Display for SwitchOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AlreadyActive { email } => {
+                write!(f, "Account '{email}' is already the active session.")
+            }
+            Self::Switched { to, .. } => {
+                write!(f, "Successfully switched active session to '{to}'.")
+            }
         }
     }
 }
@@ -718,15 +825,18 @@ pub enum SwitchError {
     AccountNotFound(String),
     #[error("Failed to update credentials: {0}")]
     UpdateFailed(String),
+    #[error("Session restoration error: {0}")]
+    Restore(#[from] SessionRestoreError),
     #[error("I/O error during session switch: {0}")]
     Io(#[from] std::io::Error),
 }
 
 pub async fn switch_to_account(
     target_email: &str,
-    restart: bool,
+    restart: impl Into<RestartProcess>,
     surface: SwitchSurface,
-) -> Result<String, SwitchError> {
+) -> Result<SwitchOutcome, SwitchError> {
+    let restart = restart.into().should_restart();
     let clean = target_email.trim().to_lowercase();
     let mut reg = load_accounts()
         .map_err(|e| SwitchError::UpdateFailed(format!("Failed to load accounts: {e}")))?;
@@ -734,7 +844,7 @@ pub async fn switch_to_account(
     let current_active = reg.active_email.clone();
     if let Some(ref curr) = current_active {
         if curr.eq_ignore_ascii_case(&clean) {
-            return Ok(format!("Account '{clean}' is already the active session."));
+            return Ok(SwitchOutcome::AlreadyActive { email: clean });
         }
         // Snapshot current
         let _ = snapshot_account(curr).await;
@@ -747,7 +857,8 @@ pub async fn switch_to_account(
     }
 
     let running = is_antigravity_running();
-    if restart && running {
+    let restarted = restart && running;
+    if restarted {
         let _ = tokio::task::spawn_blocking(stop_antigravity).await;
     }
 
@@ -758,10 +869,10 @@ pub async fn switch_to_account(
     let mut restored_ide = false;
 
     if do_desktop {
-        restored_desktop = restore_desktop_session(&clean).await;
+        restored_desktop = restore_desktop_session(&clean).await.is_ok();
     }
     if do_ide {
-        restored_ide = restore_ide_session(&clean);
+        restored_ide = restore_ide_session(&clean).is_ok();
     }
 
     // Update active_email and surfaces in registry
@@ -788,13 +899,16 @@ pub async fn switch_to_account(
     save_accounts(&reg)
         .map_err(|e| SwitchError::UpdateFailed(format!("Failed to save accounts: {e}")))?;
 
-    if restart && running {
+    if restarted {
         launch_antigravity();
     }
 
-    Ok(format!(
-        "Successfully switched active session to '{clean}'."
-    ))
+    Ok(SwitchOutcome::Switched {
+        from: current_active,
+        to: clean,
+        surface,
+        restarted,
+    })
 }
 
 fn copy_dir_recursive(src: &Path, dest: &Path) -> std::io::Result<()> {

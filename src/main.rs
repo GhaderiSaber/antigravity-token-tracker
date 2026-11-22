@@ -171,7 +171,7 @@ options:
     );
 }
 
-fn get_account_display_priority(acc: &tracker_lib::storage::AccountProfile) -> u8 {
+fn account_display_priority(acc: &tracker_lib::storage::AccountProfile) -> u8 {
     let is_desktop = acc.is_current_desktop_session.unwrap_or(false);
     let is_ide = acc.is_current_ide_session.unwrap_or(false);
     if is_desktop && is_ide {
@@ -209,8 +209,8 @@ fn run_list(command: &str, _matches: &ArgMatches) -> ExitCode {
 
         let mut sorted = all_accs;
         sorted.sort_by(|a, b| {
-            let prio_a = get_account_display_priority(a);
-            let prio_b = get_account_display_priority(b);
+            let prio_a = account_display_priority(a);
+            let prio_b = account_display_priority(b);
             prio_a
                 .cmp(&prio_b)
                 .then_with(|| a.email.to_lowercase().cmp(&b.email.to_lowercase()))
@@ -335,7 +335,7 @@ fn run_shield(command: &str, _matches: &ArgMatches) -> ExitCode {
 
         match action_str {
             "on" | "enable" => {
-                let _ = tracker_lib::shield::set_shield_enabled(config_dir, true);
+                let _ = tracker_lib::shield::enable_shield(config_dir);
                 println!("✓ IP Killswitch Shield ENABLED.");
                 println!(
                     "Antigravity processes will be automatically terminated if VPN drops or restricted IP is detected.\n"
@@ -343,7 +343,7 @@ fn run_shield(command: &str, _matches: &ArgMatches) -> ExitCode {
                 return ExitCode::SUCCESS;
             }
             "off" | "disable" => {
-                let _ = tracker_lib::shield::set_shield_enabled(config_dir, false);
+                let _ = tracker_lib::shield::disable_shield(config_dir);
                 println!("⚠️ IP Killswitch Shield DISABLED.\n");
                 return ExitCode::SUCCESS;
             }
@@ -801,12 +801,23 @@ fn run_daemon_doctor(command: &str, _matches: &ArgMatches) -> ExitCode {
 
         let report = rt.block_on(tracker_lib::daemon::run_doctor_suite());
         for item in &report.items {
-            let icon = if item.status == "PASS" { "✓" } else { "✗" };
+            let icon = match item.status {
+                tracker_lib::daemon::DiagnosticStatus::Pass => "✓",
+                tracker_lib::daemon::DiagnosticStatus::Info => "ℹ",
+                tracker_lib::daemon::DiagnosticStatus::Warn
+                | tracker_lib::daemon::DiagnosticStatus::Fail => "✗",
+            };
             println!("{} {:<35} : {}", icon, item.component, item.details);
         }
         println!("\nOverall Diagnosis: {}", report.overall_status);
 
-        let all_passed = report.items.iter().all(|i| i.status == "PASS");
+        let all_passed = report.items.iter().all(|i| {
+            matches!(
+                i.status,
+                tracker_lib::daemon::DiagnosticStatus::Pass
+                    | tracker_lib::daemon::DiagnosticStatus::Info
+            )
+        });
         return if all_passed {
             ExitCode::SUCCESS
         } else {

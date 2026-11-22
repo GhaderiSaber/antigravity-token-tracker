@@ -14,7 +14,7 @@ static PORT_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"127\.0\.0\.1:(\d
 static CSRF_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"--csrf_token[=\s]+([^\s]+)").unwrap());
 
-pub fn get_listening_ports_by_pid() -> HashMap<i32, Vec<u16>> {
+pub fn listening_ports_by_pid() -> HashMap<i32, Vec<u16>> {
     let mut pid_ports: HashMap<i32, Vec<u16>> = HashMap::new();
 
     // Use `ss -tulpn` if available
@@ -35,6 +35,11 @@ pub fn get_listening_ports_by_pid() -> HashMap<i32, Vec<u16>> {
     }
 
     pid_ports
+}
+
+#[inline]
+pub fn get_listening_ports_by_pid() -> HashMap<i32, Vec<u16>> {
+    listening_ports_by_pid()
 }
 
 pub async fn query_local_user_status(
@@ -131,7 +136,7 @@ pub async fn discover_antigravity_desktop_app() -> Option<DiscoveredSession> {
         fallback_email = em.trim().to_lowercase();
     }
 
-    let pid_ports = get_listening_ports_by_pid();
+    let pid_ports = listening_ports_by_pid();
 
     // Check /proc/[0-9]*/cmdline
     if let Ok(entries) = fs::read_dir("/proc") {
@@ -168,7 +173,7 @@ pub async fn discover_antigravity_desktop_app() -> Option<DiscoveredSession> {
                                 query_local_user_status(port, &csrf).await
                             {
                                 let keyring_email =
-                                    get_desktop_keyring_token().await.map(|(e, _, _)| e);
+                                    get_desktop_keyring_token().await.map(|rec| rec.email);
                                 let final_email = if !live_email.is_empty() {
                                     live_email
                                 } else if let Some(k_em) = keyring_email {
@@ -232,7 +237,7 @@ pub async fn discover_antigravity_desktop_app() -> Option<DiscoveredSession> {
                 if let Some((live_email, live_name, tier)) =
                     query_local_user_status(port, &csrf).await
                 {
-                    let keyring_email = get_desktop_keyring_token().await.map(|(e, _, _)| e);
+                    let keyring_email = get_desktop_keyring_token().await.map(|rec| rec.email);
                     let final_email = if !live_email.is_empty() {
                         live_email
                     } else if let Some(k_em) = keyring_email {
@@ -265,7 +270,7 @@ pub async fn discover_antigravity_desktop_app() -> Option<DiscoveredSession> {
 }
 
 pub async fn discover_antigravity_ide() -> Option<DiscoveredSession> {
-    let pid_ports = get_listening_ports_by_pid();
+    let pid_ports = listening_ports_by_pid();
 
     if let Ok(entries) = fs::read_dir("/proc") {
         for entry in entries.flatten() {

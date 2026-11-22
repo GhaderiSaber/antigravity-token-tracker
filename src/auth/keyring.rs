@@ -1,9 +1,10 @@
+use super::models::KeyringTokenRecord;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL;
 use serde_json::Value;
 use std::collections::HashMap;
 
-pub async fn get_desktop_keyring_token() -> Option<(String, Value, String)> {
+pub async fn desktop_keyring_token() -> Option<KeyringTokenRecord> {
     let connection = zbus::Connection::session().await.ok()?;
 
     // 1. Open plain session
@@ -77,5 +78,14 @@ pub async fn get_desktop_keyring_token() -> Option<(String, Value, String)> {
         }
     }
 
-    Some((email, data, raw_val))
+    Some(KeyringTokenRecord {
+        email,
+        data,
+        raw_secret: raw_val,
+    })
+}
+
+#[inline]
+pub async fn get_desktop_keyring_token() -> Option<KeyringTokenRecord> {
+    desktop_keyring_token().await
 }

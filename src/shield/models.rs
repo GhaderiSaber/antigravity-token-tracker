@@ -44,6 +44,52 @@ impl Default for EgressGeo {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum IpDetail {
+    #[default]
+    WithIp,
+    OmitIp,
+}
+
+impl From<bool> for IpDetail {
+    fn from(include_ip: bool) -> Self {
+        if include_ip {
+            Self::WithIp
+        } else {
+            Self::OmitIp
+        }
+    }
+}
+
+impl IpDetail {
+    pub fn includes_ip(self) -> bool {
+        matches!(self, Self::WithIp)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum EgressCachePolicy {
+    #[default]
+    UseCache,
+    ForceRefresh,
+}
+
+impl From<bool> for EgressCachePolicy {
+    fn from(force_refresh: bool) -> Self {
+        if force_refresh {
+            Self::ForceRefresh
+        } else {
+            Self::UseCache
+        }
+    }
+}
+
+impl EgressCachePolicy {
+    pub fn is_force_refresh(self) -> bool {
+        matches!(self, Self::ForceRefresh)
+    }
+}
+
 use std::fmt;
 use std::str::FromStr;
 
@@ -64,16 +110,18 @@ impl fmt::Display for ShieldMode {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[error("unknown shield mode: '{0}', expected 'restricted' or 'whitelist'")]
+pub struct ParseShieldModeError(pub String);
+
 impl FromStr for ShieldMode {
-    type Err = String;
+    type Err = ParseShieldModeError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_lowercase().as_str() {
             "restricted" => Ok(Self::Restricted),
             "whitelist" | "white_list" | "white-list" => Ok(Self::Whitelist),
-            other => Err(format!(
-                "unknown shield mode: '{other}', expected 'restricted' or 'whitelist'"
-            )),
+            other => Err(ParseShieldModeError(other.to_string())),
         }
     }
 }
@@ -97,17 +145,19 @@ impl fmt::Display for ShieldAction {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[error("unknown shield action: '{0}', expected 'kill_process', 'kill_network', or 'both'")]
+pub struct ParseShieldActionError(pub String);
+
 impl FromStr for ShieldAction {
-    type Err = String;
+    type Err = ParseShieldActionError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_lowercase().as_str() {
             "kill_process" | "kill-process" | "killprocess" => Ok(Self::KillProcess),
             "kill_network" | "kill-network" | "killnetwork" => Ok(Self::KillNetwork),
             "both" => Ok(Self::Both),
-            other => Err(format!(
-                "unknown shield action: '{other}', expected 'kill_process', 'kill_network', or 'both'"
-            )),
+            other => Err(ParseShieldActionError(other.to_string())),
         }
     }
 }

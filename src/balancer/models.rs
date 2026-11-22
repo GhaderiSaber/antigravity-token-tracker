@@ -21,8 +21,14 @@ impl std::fmt::Display for BalancerStrategy {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, thiserror::Error)]
+#[error(
+    "Invalid balancer strategy: '{0}'. Valid strategies are: watermark, expiry_first, round_robin, reactive"
+)]
+pub struct ParseBalancerStrategyError(pub String);
+
 impl std::str::FromStr for BalancerStrategy {
-    type Err = String;
+    type Err = ParseBalancerStrategyError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_ascii_lowercase().replace('-', "_").as_str() {
@@ -30,9 +36,7 @@ impl std::str::FromStr for BalancerStrategy {
             "expiry_first" | "expiry" => Ok(Self::ExpiryFirst),
             "round_robin" | "roundrobin" => Ok(Self::RoundRobin),
             "reactive" => Ok(Self::Reactive),
-            _ => Err(format!(
-                "Invalid balancer strategy: '{s}'. Valid strategies are: watermark, expiry_first, round_robin, reactive"
-            )),
+            _ => Err(ParseBalancerStrategyError(s.to_string())),
         }
     }
 }
@@ -123,4 +127,52 @@ pub struct SwitchResult {
     pub message: String,
     pub from_email: Option<String>,
     pub to_email: String,
+}
+
+impl From<crate::balancer::switcher::SwitchOutcome> for SwitchResult {
+    fn from(outcome: crate::balancer::switcher::SwitchOutcome) -> Self {
+        match outcome {
+            crate::balancer::switcher::SwitchOutcome::AlreadyActive { email } => Self {
+                success: true,
+                message: format!("Account '{email}' is already the active session."),
+                from_email: None,
+                to_email: email,
+            },
+            crate::balancer::switcher::SwitchOutcome::Switched { from, to, .. } => Self {
+                success: true,
+                message: format!("Successfully switched active session to '{to}'."),
+                from_email: from,
+                to_email: to,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct SnapshotResult {
+    pub desktop_saved: bool,
+    pub ide_saved: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum RestartProcess {
+    #[default]
+    RestartIfRunning,
+    DoNotRestart,
+}
+
+impl From<bool> for RestartProcess {
+    fn from(restart: bool) -> Self {
+        if restart {
+            Self::RestartIfRunning
+        } else {
+            Self::DoNotRestart
+        }
+    }
+}
+
+impl RestartProcess {
+    pub fn should_restart(self) -> bool {
+        matches!(self, Self::RestartIfRunning)
+    }
 }

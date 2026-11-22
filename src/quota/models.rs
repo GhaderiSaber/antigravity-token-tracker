@@ -3,6 +3,29 @@ use std::collections::HashMap;
 
 pub use crate::storage::models::{ModelQuota, QuotaBucket, QuotaGroup, QuotaSnapshot};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum QuotaRefreshPolicy {
+    #[default]
+    UseCache,
+    ForceRefresh,
+}
+
+impl From<bool> for QuotaRefreshPolicy {
+    fn from(force_refresh: bool) -> Self {
+        if force_refresh {
+            Self::ForceRefresh
+        } else {
+            Self::UseCache
+        }
+    }
+}
+
+impl QuotaRefreshPolicy {
+    pub fn is_force_refresh(self) -> bool {
+        matches!(self, Self::ForceRefresh)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AccountQuotaResult {
     pub email: String,

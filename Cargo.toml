@@ -52,7 +52,7 @@ lto = true
 codegen-units = 1
 
 [lints.rust]
-unsafe_code = "allow"
+unsafe_code = "warn"
 
 [lints.clippy]
 assigning_clones = "warn"

@@ -98,7 +98,7 @@ pub fn save_balancer_state(state: &BalancerState) -> std::io::Result<()> {
     fs::write(path, content)
 }
 
-pub fn get_account_reset_seconds(account_data: &AccountQuotaResult) -> i64 {
+pub fn account_reset_seconds(account_data: &AccountQuotaResult) -> i64 {
     for g in &account_data.groups {
         if let Some(w) = &g.weekly
             && let Some(secs) = w.seconds_remaining
@@ -109,7 +109,12 @@ pub fn get_account_reset_seconds(account_data: &AccountQuotaResult) -> i64 {
     604_800
 }
 
-pub fn get_eligible_pool_accounts(
+#[inline]
+pub fn get_account_reset_seconds(account_data: &AccountQuotaResult) -> i64 {
+    account_reset_seconds(account_data)
+}
+
+pub fn eligible_pool_accounts(
     analyzed_quotas: &HashMap<String, AccountQuotaResult>,
     min_quota_pct: f64,
 ) -> Vec<PoolAccount> {
@@ -138,7 +143,7 @@ pub fn get_eligible_pool_accounts(
             }
         }
 
-        let reset_secs = get_account_reset_seconds(q);
+        let reset_secs = account_reset_seconds(q);
         let is_active = q.is_current_desktop_session || q.is_current_ide_session;
         let is_eligible = rem_pct >= min_quota_pct && !is_exh;
 
@@ -153,6 +158,14 @@ pub fn get_eligible_pool_accounts(
     }
 
     pool
+}
+
+#[inline]
+pub fn get_eligible_pool_accounts(
+    analyzed_quotas: &HashMap<String, AccountQuotaResult>,
+    min_quota_pct: f64,
+) -> Vec<PoolAccount> {
+    eligible_pool_accounts(analyzed_quotas, min_quota_pct)
 }
 
 pub fn evaluate_watermark_strategy(
@@ -330,7 +343,7 @@ pub async fn evaluate_and_execute_balancer(
         };
     }
 
-    let pool = get_eligible_pool_accounts(analyzed_quotas, cfg.min_quota_pct);
+    let pool = eligible_pool_accounts(analyzed_quotas, cfg.min_quota_pct);
     if pool.len() < 2 {
         return BalancerDecision {
             triggered: false,
