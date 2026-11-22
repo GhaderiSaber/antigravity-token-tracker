@@ -34,33 +34,22 @@ mkdir -p "$HOME/.config/systemd/user"
 cat << EOF > "$HOME/.config/systemd/user/antigravity-token-tracker.service"
 [Unit]
 Description=Antigravity Account Token & Quota Lifecycle Tray Daemon (Rust Native)
-After=network.target graphical-session.target
-PartOf=graphical-session.target
+After=network.target
 
 [Service]
 Type=simple
 ExecStart=$TARGET_BIN tray --interval 60
 Restart=on-failure
-RestartSec=15
-Environment=DISPLAY=:0
-Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%U/bus
+RestartSec=5
 Environment=RUST_LOG=info
 
 [Install]
 WantedBy=default.target
 EOF
 
-# Determine optimal background runner (systemd user service vs desktop autostart)
-if command -v systemctl &>/dev/null && systemctl --user status &>/dev/null; then
-    systemctl --user daemon-reload 2>/dev/null || true
-    systemctl --user enable --now antigravity-token-tracker.service 2>/dev/null || true
-    # Remove redundant autostart entry to prevent duplicate singleton lock conflicts
-    rm -f "$HOME/.config/autostart/agy-token.desktop"
-    echo "✓ Enabled and started systemd user service: antigravity-token-tracker.service"
-else
-    # Fallback for non-systemd environments: configure desktop autostart
-    mkdir -p "$HOME/.config/autostart"
-    cat << EOF > "$HOME/.config/autostart/agy-token.desktop"
+# Always configure desktop autostart as a universal fallback
+mkdir -p "$HOME/.config/autostart"
+cat << EOF > "$HOME/.config/autostart/agy-token.desktop"
 [Desktop Entry]
 Type=Application
 Name=Antigravity Token Tracker
@@ -71,11 +60,39 @@ Terminal=false
 Categories=Utility;System;
 X-GNOME-Autostart-enabled=true
 EOF
-    chmod 644 "$HOME/.config/autostart/agy-token.desktop"
-    echo "✓ Configured desktop autostart: $HOME/.config/autostart/agy-token.desktop"
-    # Launch immediately in background for current session
+chmod 644 "$HOME/.config/autostart/agy-token.desktop"
+echo "✓ Configured desktop autostart: $HOME/.config/autostart/agy-token.desktop"
+
+# Activate background service via systemd if available, else launch directly
+TRAY_STARTED=false
+if command -v systemctl &>/dev/null && systemctl --user status &>/dev/null; then
+    systemctl --user daemon-reload 2>/dev/null || true
+    if systemctl --user enable --now antigravity-token-tracker.service 2>/dev/null; then
+        echo "✓ Enabled and started systemd user service: antigravity-token-tracker.service"
+        TRAY_STARTED=true
+    fi
+fi
+
+if [ "$TRAY_STARTED" = false ]; then
+    # Launch in background for current session
     nohup "$TARGET_BIN" tray >/dev/null 2>&1 &
     echo "✓ Started background tray indicator in current session (PID $!)"
+fi
+
+# 5. Desktop Environment & AppIndicator extension check
+if command -v gnome-shell &>/dev/null && command -v gnome-extensions &>/dev/null; then
+    if ! gnome-extensions list --enabled 2>/dev/null | grep -qiE 'appindicator|tray'; then
+        echo ""
+        echo "⚠️  Note: GNOME Shell is running without an AppIndicator / StatusNotifier extension."
+        echo "   GNOME requires an extension to display top-bar tray applets."
+        echo "   To enable system tray icons, install and activate the extension:"
+        echo "     • Ubuntu / Debian: sudo apt install gnome-shell-extension-appindicator"
+        echo "     • Fedora:          sudo dnf install gnome-shell-extension-appindicator"
+        echo "     • Arch Linux:      sudo pacman -S gnome-shell-extension-appindicator"
+        echo "     Then run:          gnome-extensions enable ubuntu-appindicators@ubuntu.com"
+        echo "                        (or: gnome-extensions enable appindicatorsupport@rgcjonas.gmail.com)"
+        echo ""
+    fi
 fi
 
 # 6. PATH verification

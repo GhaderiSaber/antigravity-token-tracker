@@ -69,10 +69,11 @@ pub async fn run_tray(
         state: shared_state.clone(),
     };
 
-    // 4. Spawn tray service immediately over DBus
+    // 4. Spawn tray service immediately over DBus (assume_sni_available ensures resilience
+    // if the desktop StatusNotifierWatcher starts slightly after or temporarily disconnects)
     println!("[Tray] Registering StatusNotifierItem over DBus...");
-    let service = tray.spawn().await?;
-    println!("[Tray] Registered with desktop StatusNotifierWatcher.");
+    let service = tray.assume_sni_available(true).spawn().await?;
+    println!("[Tray] Registered StatusNotifierItem service.");
 
     // 5. Periodic update loop (first tick fires immediately to fetch live data)
     let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
