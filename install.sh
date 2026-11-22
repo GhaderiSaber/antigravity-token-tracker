@@ -95,13 +95,56 @@ if command -v gnome-shell &>/dev/null && command -v gnome-extensions &>/dev/null
     fi
 fi
 
-# 6. PATH verification
+# 6. Automatic PATH Configuration & System Integration
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
-    echo ""
-    echo "⚠️  Note: $BIN_DIR is not currently in your \$PATH."
-    echo "   To use 'agy-token' directly from anywhere, add this to your ~/.bashrc or ~/.zshrc:"
-    echo "   export PATH=\"\$HOME/.local/bin:\$PATH\""
-    echo ""
+    export PATH="$BIN_DIR:$PATH"
+
+    # Automatically add to ~/.bashrc if not already present
+    if [ -f "$HOME/.bashrc" ] && ! grep -q 'PATH=.*\.local/bin' "$HOME/.bashrc"; then
+        echo '' >> "$HOME/.bashrc"
+        echo '# Added by Antigravity Token Tracker installer' >> "$HOME/.bashrc"
+        echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+        echo "✓ Added $BIN_DIR to $HOME/.bashrc"
+    fi
+
+    # Automatically add to ~/.zshrc if exists and not already present
+    if [ -f "$HOME/.zshrc" ] && ! grep -q 'PATH=.*\.local/bin' "$HOME/.zshrc"; then
+        echo '' >> "$HOME/.zshrc"
+        echo '# Added by Antigravity Token Tracker installer' >> "$HOME/.zshrc"
+        echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.zshrc"
+        echo "✓ Added $BIN_DIR to $HOME/.zshrc"
+    fi
+
+    # Automatically add to ~/.profile if exists and not already present
+    if [ -f "$HOME/.profile" ] && ! grep -q 'PATH=.*\.local/bin' "$HOME/.profile"; then
+        echo '' >> "$HOME/.profile"
+        echo '# Added by Antigravity Token Tracker installer' >> "$HOME/.profile"
+        echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.profile"
+        echo "✓ Added $BIN_DIR to $HOME/.profile"
+    fi
+fi
+
+# Try linking to /usr/local/bin for global access across all shells and scripts
+if [ -w /usr/local/bin ]; then
+    ln -sf "$TARGET_BIN" /usr/local/bin/agy-token 2>/dev/null && echo "✓ Linked to system PATH: /usr/local/bin/agy-token"
+fi
+
+# 7. Verification Smoke Test
+echo ""
+echo "🔍 Verifying installation..."
+if ! "$TARGET_BIN" --help &>/dev/null; then
+    echo "❌ Error: Installed binary failed execution test at $TARGET_BIN"
+    exit 1
+fi
+echo "✓ Standalone binary verified: $TARGET_BIN runs successfully."
+
+if command -v agy-token &>/dev/null; then
+    echo "✓ Verified CLI command in PATH: $(which agy-token)"
+else
+    echo "⚠️  Note: $BIN_DIR has been added to your shell profile."
+    echo "   To use 'agy-token' immediately in this current terminal window, run:"
+    echo "     export PATH=\"\$HOME/.local/bin:\$PATH\""
+    echo "   (or open a new terminal window)"
 fi
 
 echo ""
