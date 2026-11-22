@@ -6,21 +6,26 @@ use rusqlite::{Connection, OpenFlags};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
-static CHUNK_RE_40: LazyLock<ByteRegex> =
-    LazyLock::new(|| ByteRegex::new(r"[A-Za-z0-9+/=]{40,}").unwrap());
-static CHUNK_RE_20: LazyLock<ByteRegex> =
-    LazyLock::new(|| ByteRegex::new(r"[A-Za-z0-9+/=]{20,}").unwrap());
-static ACC_RE: LazyLock<ByteRegex> =
-    LazyLock::new(|| ByteRegex::new(r"ya29\.[a-zA-Z0-9_-]+").unwrap());
-static REF_RE: LazyLock<ByteRegex> =
-    LazyLock::new(|| ByteRegex::new(r"1//[a-zA-Z0-9_-]+").unwrap());
+static CHUNK_RE_40: LazyLock<ByteRegex> = LazyLock::new(|| {
+    ByteRegex::new(r"[A-Za-z0-9+/=]{40,}").expect("valid 40-char chunk regex pattern")
+});
+static CHUNK_RE_20: LazyLock<ByteRegex> = LazyLock::new(|| {
+    ByteRegex::new(r"[A-Za-z0-9+/=]{20,}").expect("valid 20-char chunk regex pattern")
+});
+static ACC_RE: LazyLock<ByteRegex> = LazyLock::new(|| {
+    ByteRegex::new(r"ya29\.[a-zA-Z0-9_-]+").expect("valid access token regex pattern")
+});
+static REF_RE: LazyLock<ByteRegex> = LazyLock::new(|| {
+    ByteRegex::new(r"1//[a-zA-Z0-9_-]+").expect("valid refresh token regex pattern")
+});
 static EMAIL_RE: LazyLock<ByteRegex> = LazyLock::new(|| {
     ByteRegex::new(
         r#"(?:^|[\x00-\x20":<>,'\(\)\[\]])([a-zA-Z0-9][a-zA-Z0-9._%+-]*@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})"#,
     )
-    .unwrap()
+    .expect("valid email regex pattern")
 });
 
+#[must_use]
 pub fn default_ide_state_db() -> PathBuf {
     dirs::home_dir().map_or_else(
         || PathBuf::from(".config/Antigravity IDE/User/globalStorage/state.vscdb"),

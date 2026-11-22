@@ -9,11 +9,15 @@ use std::path::PathBuf;
 use std::sync::LazyLock;
 use std::time::Duration;
 
-static PID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"pid=(\d+)").unwrap());
-static PORT_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"127\.0\.0\.1:(\d+)").unwrap());
-static CSRF_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"--csrf_token[=\s]+([^\s]+)").unwrap());
+static PID_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"pid=(\d+)").expect("valid PID regex pattern"));
+static PORT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"127\.0\.0\.1:(\d+)").expect("valid port regex pattern"));
+static CSRF_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"--csrf_token[=\s]+([^\s]+)").expect("valid CSRF token regex pattern")
+});
 
+#[must_use]
 pub fn listening_ports_by_pid() -> HashMap<i32, Vec<u16>> {
     let mut pid_ports: HashMap<i32, Vec<u16>> = HashMap::new();
 
@@ -38,6 +42,7 @@ pub fn listening_ports_by_pid() -> HashMap<i32, Vec<u16>> {
 }
 
 #[inline]
+#[must_use]
 pub fn get_listening_ports_by_pid() -> HashMap<i32, Vec<u16>> {
     listening_ports_by_pid()
 }

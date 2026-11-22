@@ -86,7 +86,7 @@ pub fn historical_quota(email: &str) -> Option<QuotaSnapshot> {
             remaining_fraction: Some((pct / 100.0 * 10000.0).round() / 10000.0),
             remaining_percent: Some((pct * 100.0).round() / 100.0),
             reset_time: Some(w_reset.to_string()),
-            description: Some("".to_string()),
+            description: Some(String::new()),
             ..Default::default()
         });
 
@@ -96,14 +96,14 @@ pub fn historical_quota(email: &str) -> Option<QuotaSnapshot> {
             display_name: Some(g_name.clone()),
             remaining_fraction: Some((pct / 100.0 * 10000.0).round() / 10000.0),
             remaining_percent: Some((pct * 100.0).round() / 100.0),
-            reset_time: Some("".to_string()),
-            description: Some("".to_string()),
+            reset_time: Some(String::new()),
+            description: Some(String::new()),
             ..Default::default()
         });
 
         parsed_groups.push(QuotaGroup {
             display_name: g_name.clone(),
-            description: Some("".to_string()),
+            description: Some(String::new()),
             weekly: weekly_bucket,
             five_hour: five_hour_bucket,
         });

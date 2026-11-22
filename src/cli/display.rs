@@ -2,7 +2,9 @@ use crate::balancer::models::BalancerConfig;
 use crate::quota::models::AccountQuotaResult;
 use crate::shield::models::{EgressGeo, ShieldConfig};
 use std::collections::HashMap;
+use std::fmt::Write;
 
+#[must_use]
 pub fn format_progress_bar(pct: f64) -> String {
     let filled = ((pct / 100.0) * 10.0).round() as usize;
     let filled = filled.min(10);
@@ -10,6 +12,7 @@ pub fn format_progress_bar(pct: f64) -> String {
     format!("{:.1}% [{}{}]", pct, "█".repeat(filled), "░".repeat(empty))
 }
 
+#[must_use]
 pub fn render_account_table(email: &str, account: &AccountQuotaResult, is_active: bool) -> String {
     let mut out = String::new();
     let tier = if account.tier.is_empty() {
@@ -18,22 +21,25 @@ pub fn render_account_table(email: &str, account: &AccountQuotaResult, is_active
         &account.tier
     };
     let active_str = if is_active { " (● ACTIVE)" } else { "" };
-    out.push_str(&format!(
-        "╭─ Account: {email} [{tier}{active_str}] ──────────────────────────────╮\n"
-    ));
-    out.push_str(&format!(
-        "│ {:<28} │ {:<18} │ {:<15} │ {:<12} │\n",
+    let _ = writeln!(
+        out,
+        "╭─ Account: {email} [{tier}{active_str}] ──────────────────────────────╮"
+    );
+    let _ = writeln!(
+        out,
+        "│ {:<28} │ {:<18} │ {:<15} │ {:<12} │",
         "Group Name", "Weekly Quota", "Reset In", "Status"
-    ));
+    );
     out.push_str(
         "├──────────────────────────────┼────────────────────┼─────────────────┼──────────────┤\n",
     );
 
     if account.groups.is_empty() {
-        out.push_str(&format!(
-            "│ {:<28} │ {:<18} │ {:<15} │ {:<12} │\n",
+        let _ = writeln!(
+            out,
+            "│ {:<28} │ {:<18} │ {:<15} │ {:<12} │",
             "No quota recorded", "-", "-", "NO DATA"
-        ));
+        );
     } else {
         for g in &account.groups {
             let g_name = if g.display_name.len() > 28 {
@@ -58,9 +64,10 @@ pub fn render_account_table(email: &str, account: &AccountQuotaResult, is_active
                 .and_then(|w| w.status_badge.as_deref())
                 .unwrap_or("HEALTHY");
 
-            out.push_str(&format!(
-                "│ {g_name:<28} │ {w_bar:<18} │ {w_reset:<15} │ {badge:<12} │\n"
-            ));
+            let _ = writeln!(
+                out,
+                "│ {g_name:<28} │ {w_bar:<18} │ {w_reset:<15} │ {badge:<12} │"
+            );
         }
     }
 
@@ -70,6 +77,7 @@ pub fn render_account_table(email: &str, account: &AccountQuotaResult, is_active
     out
 }
 
+#[must_use]
 pub fn render_status_dashboard(
     all_quotas: &HashMap<String, AccountQuotaResult>,
     geo_info: &EgressGeo,
@@ -87,10 +95,11 @@ pub fn render_status_dashboard(
     } else {
         "✓ Safe Egress"
     };
-    out.push_str(&format!(
-        "│ IP: {} {} ({}, {}) | Status: {:<20} │\n",
+    let _ = writeln!(
+        out,
+        "│ IP: {} {} ({}, {}) | Status: {:<20} │",
         geo_info.flag, geo_info.ip, geo_info.city, geo_info.country_code, safe_badge
-    ));
+    );
     out.push_str(
         "╰──────────────────────────────────────────────────────────────────────────────╯\n\n",
     );
@@ -106,8 +115,9 @@ pub fn render_status_dashboard(
     out.push_str(
         "╭─ 🛡️ System Protection & Automation ──────────────────────────────────────────╮\n",
     );
-    out.push_str(&format!(
-        "│ Geo-Shield: {:<10} | Mode: {:<12} | Action: {:<20} │\n",
+    let _ = writeln!(
+        out,
+        "│ Geo-Shield: {:<10} | Mode: {:<12} | Action: {:<20} │",
         if shield_cfg.enabled {
             "ENABLED"
         } else {
@@ -115,9 +125,10 @@ pub fn render_status_dashboard(
         },
         shield_cfg.mode,
         shield_cfg.action
-    ));
-    out.push_str(&format!(
-        "│ Auto-Balancer: {:<7} | Strategy: {:<8} | Watermark Spread: {:<13} │\n",
+    );
+    let _ = writeln!(
+        out,
+        "│ Auto-Balancer: {:<7} | Strategy: {:<8} | Watermark Spread: {:<13} │",
         if bal_cfg.enabled {
             "ENABLED"
         } else {
@@ -125,7 +136,7 @@ pub fn render_status_dashboard(
         },
         bal_cfg.strategy,
         format!("{:.1}%", bal_cfg.watermark_spread_pct)
-    ));
+    );
     out.push_str(
         "╰──────────────────────────────────────────────────────────────────────────────╯\n",
     );

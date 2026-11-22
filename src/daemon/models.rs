@@ -62,6 +62,28 @@ impl std::fmt::Display for DiagnosticStatus {
     }
 }
 
+impl DiagnosticStatus {
+    #[must_use]
+    pub fn is_pass(self) -> bool {
+        matches!(self, Self::Pass)
+    }
+
+    #[must_use]
+    pub fn is_warn(self) -> bool {
+        matches!(self, Self::Warn)
+    }
+
+    #[must_use]
+    pub fn is_fail(self) -> bool {
+        matches!(self, Self::Fail)
+    }
+
+    #[must_use]
+    pub fn is_info(self) -> bool {
+        matches!(self, Self::Info)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DiagnosticItem {
     pub component: String,

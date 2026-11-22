@@ -377,9 +377,10 @@ pub fn format_burnrate_badge(metrics: Option<&MultiwindowVelocity>) -> String {
     }
 }
 
+#[must_use]
 pub fn format_burnrate_tray_summary(metrics: Option<&MultiwindowVelocity>) -> String {
     let Some(metrics) = metrics else {
-        return "".to_string();
+        return String::new();
     };
     let pri = &metrics.primary;
     if pri.is_depleting {
@@ -388,6 +389,6 @@ pub fn format_burnrate_tray_summary(metrics: Option<&MultiwindowVelocity>) -> St
             pri.velocity_pct_per_hour, pri.eta_human
         )
     } else {
-        "".to_string()
+        String::new()
     }
 }

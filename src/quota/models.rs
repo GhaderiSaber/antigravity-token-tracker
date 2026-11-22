@@ -21,6 +21,7 @@ impl From<bool> for QuotaRefreshPolicy {
 }
 
 impl QuotaRefreshPolicy {
+    #[must_use]
     pub fn is_force_refresh(self) -> bool {
         matches!(self, Self::ForceRefresh)
     }

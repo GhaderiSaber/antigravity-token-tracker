@@ -62,6 +62,7 @@ impl From<bool> for IpDetail {
 }
 
 impl IpDetail {
+    #[must_use]
     pub fn includes_ip(self) -> bool {
         matches!(self, Self::WithIp)
     }
@@ -85,6 +86,7 @@ impl From<bool> for EgressCachePolicy {
 }
 
 impl EgressCachePolicy {
+    #[must_use]
     pub fn is_force_refresh(self) -> bool {
         matches!(self, Self::ForceRefresh)
     }

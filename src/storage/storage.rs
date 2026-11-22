@@ -34,9 +34,13 @@ pub fn default_history_file() -> PathBuf {
     )
 }
 
+#[derive(Debug, Clone)]
 pub struct StorageManager {
     config_dir: PathBuf,
 }
+
+/// Idiomatic alias for [`StorageManager`] to omit the Manager suffix.
+pub type Storage = StorageManager;
 
 impl Default for StorageManager {
     fn default() -> Self {
@@ -45,16 +49,19 @@ impl Default for StorageManager {
 }
 
 impl StorageManager {
+    #[must_use]
     pub fn new(config_dir: impl Into<PathBuf>) -> Self {
         Self {
             config_dir: config_dir.into(),
         }
     }
 
+    #[must_use]
     pub fn config_dir(&self) -> &Path {
         &self.config_dir
     }
 
+    #[must_use]
     pub fn accounts_file(&self) -> PathBuf {
         self.config_dir.join("accounts.json")
     }

@@ -172,6 +172,7 @@ impl From<bool> for RestartProcess {
 }
 
 impl RestartProcess {
+    #[must_use]
     pub fn should_restart(self) -> bool {
         matches!(self, Self::RestartIfRunning)
     }
