@@ -97,6 +97,15 @@ pub fn build_tray_state_from_data(input: TrayStateInput<'_>) -> TrayState {
         format!("{} ({})", input.geo_info.ip, input.geo_info.country_code)
     };
 
+    let account_quotas = input
+        .quotas
+        .iter()
+        .map(|(email, q)| {
+            let (pct, _) = crate::daemon::failover::account_primary_quota(q);
+            (email.trim().to_lowercase(), pct)
+        })
+        .collect();
+
     TrayState {
         indicator,
         active_email,
@@ -112,7 +121,65 @@ pub fn build_tray_state_from_data(input: TrayStateInput<'_>) -> TrayState {
         is_balancer_enabled: input.is_balancer_enabled,
         balancer_strategy: input.balancer_strategy,
         backup_candidate: input.backup_candidate,
+        account_quotas,
     }
+}
+
+fn build_tray_state_from_quotas_and_geo(
+    quotas: &HashMap<String, AccountQuotaResult>,
+    geo_info: &EgressGeo,
+    storage: &StorageManager,
+    icon_cache_dir: &Path,
+) -> TrayState {
+    let reg = storage.load_accounts().unwrap_or_default();
+    let acc_list: Vec<AccountProfile> = reg.accounts.into_values().collect();
+    let sh_cfg = crate::shield::shield::load_shield_config(storage.config_dir());
+    let b_cfg = crate::balancer::balancer::load_balancer_config();
+
+    let sessions = crate::daemon::failover::active_sessions(quotas);
+    let exclude: Vec<String> = sessions.values().map(|(e, _)| e.clone()).collect();
+    let active_email = crate::daemon::failover::active_account(quotas).map(|(e, _)| e);
+    let backup_candidate = crate::daemon::failover::find_best_failover_candidate(
+        quotas,
+        active_email.as_deref(),
+        &exclude,
+        5.0,
+    );
+
+    build_tray_state_from_data(TrayStateInput {
+        quotas,
+        accounts: acc_list,
+        geo_info,
+        is_shield_enabled: sh_cfg.enabled,
+        is_balancer_enabled: b_cfg.enabled,
+        balancer_strategy: b_cfg.strategy,
+        backup_candidate,
+        icon_cache_dir,
+    })
+}
+
+fn build_tray_state_from_snapshot(
+    snapshot: &crate::daemon::DaemonTickSnapshot,
+    storage: &StorageManager,
+    icon_cache_dir: &Path,
+) -> TrayState {
+    build_tray_state_from_quotas_and_geo(&snapshot.quotas, &snapshot.geo, storage, icon_cache_dir)
+}
+
+async fn apply_feed_snapshot(
+    snapshot: &crate::daemon::DaemonTickSnapshot,
+    storage: &StorageManager,
+    shared_state: &Arc<Mutex<TrayState>>,
+    service: &ksni::Handle<AntigravityTray>,
+) {
+    let new_state = build_tray_state_from_snapshot(snapshot, storage, &default_icon_cache_dir());
+    {
+        let mut st = shared_state
+            .lock()
+            .expect("tray shared state lock poisoned");
+        *st = new_state;
+    }
+    let _ = service.update(|_tray: &mut AntigravityTray| {}).await;
 }
 
 async fn refresh_tray_state(
@@ -130,32 +197,16 @@ async fn refresh_tray_state(
     )
     .await;
 
-    let reg = storage.load_accounts().unwrap_or_default();
-    let acc_list: Vec<AccountProfile> = reg.accounts.into_values().collect();
-    let sh_cfg = crate::shield::shield::load_shield_config(storage.config_dir());
-    let b_cfg = crate::balancer::balancer::load_balancer_config();
+    let new_state =
+        build_tray_state_from_quotas_and_geo(&q_map, &geo_info, storage, &default_icon_cache_dir());
 
-    let sessions = crate::daemon::failover::active_sessions(&q_map);
-    let exclude: Vec<String> = sessions.values().map(|(e, _)| e.clone()).collect();
-    let active_email = crate::daemon::failover::active_account(&q_map).map(|(e, _)| e);
-    let backup_candidate = crate::daemon::failover::find_best_failover_candidate(
-        &q_map,
-        active_email.as_deref(),
-        &exclude,
-        5.0,
+    crate::web::server::broadcast_event(
+        "quota_updated",
+        serde_json::json!({
+            "accounts": &q_map,
+            "geo": &geo_info,
+        }),
     );
-
-    let icon_cache_dir = default_icon_cache_dir();
-    let new_state = build_tray_state_from_data(TrayStateInput {
-        quotas: &q_map,
-        accounts: acc_list,
-        geo_info: &geo_info,
-        is_shield_enabled: sh_cfg.enabled,
-        is_balancer_enabled: b_cfg.enabled,
-        balancer_strategy: b_cfg.strategy,
-        backup_candidate,
-        icon_cache_dir: &icon_cache_dir,
-    });
 
     {
         let mut st = shared_state
@@ -165,6 +216,71 @@ async fn refresh_tray_state(
     }
 
     let _ = service.update(|_tray: &mut AntigravityTray| {}).await;
+}
+
+fn toggle_shield_and_broadcast(
+    storage: &StorageManager,
+    shared_state: &Arc<Mutex<TrayState>>,
+) -> bool {
+    let mut cfg = crate::shield::shield::load_shield_config(storage.config_dir());
+    cfg.enabled = !cfg.enabled;
+    if let Err(err) = crate::shield::shield::save_shield_config(storage.config_dir(), &cfg) {
+        eprintln!("[Tray] Failed to save shield config: {err}");
+    }
+    {
+        let mut st = shared_state
+            .lock()
+            .expect("tray shared state lock poisoned");
+        st.is_shield_enabled = cfg.enabled;
+    }
+    crate::web::server::broadcast_event(
+        "shield_updated",
+        serde_json::json!({ "enabled": cfg.enabled, "mode": cfg.mode }),
+    );
+    cfg.enabled
+}
+
+fn toggle_balancer_and_broadcast(shared_state: &Arc<Mutex<TrayState>>) -> bool {
+    let mut cfg = crate::balancer::balancer::load_balancer_config();
+    cfg.enabled = !cfg.enabled;
+    if let Err(err) = crate::balancer::balancer::save_balancer_config(&cfg) {
+        eprintln!("[Tray] Failed to save balancer config: {err}");
+    }
+    {
+        let mut st = shared_state
+            .lock()
+            .expect("tray shared state lock poisoned");
+        st.is_balancer_enabled = cfg.enabled;
+    }
+    crate::web::server::broadcast_event(
+        "balancer_rotated",
+        serde_json::json!({ "enabled": cfg.enabled, "strategy": cfg.strategy }),
+    );
+    cfg.enabled
+}
+
+fn route_notification_action(
+    action: &str,
+    shared_state: &Arc<Mutex<TrayState>>,
+    cmd_tx: &UnboundedSender<TrayCommand>,
+) {
+    match action {
+        "switch_best" => {
+            let target = shared_state
+                .lock()
+                .expect("tray shared state lock poisoned")
+                .backup_candidate
+                .as_ref()
+                .map(|(email, _)| email.clone());
+            if let Some(email) = target {
+                let _ = cmd_tx.send(TrayCommand::SwitchAccount(email));
+            }
+        }
+        "open_dashboard" => {
+            let _ = cmd_tx.send(TrayCommand::OpenDashboard);
+        }
+        _ => {}
+    }
 }
 
 async fn handle_tray_command(
@@ -183,20 +299,9 @@ async fn handle_tray_command(
             });
         }
         TrayCommand::ToggleShield => {
-            let mut cfg = crate::shield::shield::load_shield_config(storage.config_dir());
-            cfg.enabled = !cfg.enabled;
-            if let Err(err) = crate::shield::shield::save_shield_config(storage.config_dir(), &cfg)
-            {
-                eprintln!("[Tray] Failed to save shield config: {err}");
-            }
-            {
-                let mut st = shared_state
-                    .lock()
-                    .expect("tray shared state lock poisoned");
-                st.is_shield_enabled = cfg.enabled;
-            }
+            let enabled = toggle_shield_and_broadcast(storage, shared_state);
             let _ = service.update(|_tray: &mut AntigravityTray| {}).await;
-            let desc = if cfg.enabled {
+            let desc = if enabled {
                 "ACTIVATED (Auto-terminates Antigravity if VPN drops)"
             } else {
                 "DISABLED"
@@ -211,19 +316,9 @@ async fn handle_tray_command(
             });
         }
         TrayCommand::ToggleBalancer => {
-            let mut cfg = crate::balancer::balancer::load_balancer_config();
-            cfg.enabled = !cfg.enabled;
-            if let Err(err) = crate::balancer::balancer::save_balancer_config(&cfg) {
-                eprintln!("[Tray] Failed to save balancer config: {err}");
-            }
-            {
-                let mut st = shared_state
-                    .lock()
-                    .expect("tray shared state lock poisoned");
-                st.is_balancer_enabled = cfg.enabled;
-            }
+            let enabled = toggle_balancer_and_broadcast(shared_state);
             let _ = service.update(|_tray: &mut AntigravityTray| {}).await;
-            let desc = if cfg.enabled { "ENABLED" } else { "DISABLED" };
+            let desc = if enabled { "ENABLED" } else { "DISABLED" };
             tokio::spawn(async move {
                 let _ = crate::daemon::notifier::send_desktop_notification(
                     "🔄 Auto-Balancer",
@@ -243,7 +338,13 @@ async fn handle_tray_command(
                 )
                 .await
                 {
-                    Ok(m) => (true, m.to_string()),
+                    Ok(m) => {
+                        crate::web::server::broadcast_event(
+                            "account_switched",
+                            serde_json::json!({ "target": target, "surface": "both" }),
+                        );
+                        (true, m.to_string())
+                    }
                     Err(e) => (false, e.to_string()),
                 };
                 let title = if ok {
@@ -284,11 +385,37 @@ async fn wait_for_shutdown(shutdown: &mut Option<tokio::sync::watch::Receiver<bo
     }
 }
 
+async fn wait_for_feed_snapshot(
+    feed: &mut Option<tokio::sync::watch::Receiver<Option<crate::daemon::DaemonTickSnapshot>>>,
+) -> crate::daemon::DaemonTickSnapshot {
+    loop {
+        let Some(rx) = feed.as_mut() else {
+            std::future::pending::<()>().await;
+            unreachable!();
+        };
+        if rx.changed().await.is_err() {
+            // Sender dropped; park this branch instead of busy-looping or starting duplicate polling.
+            *feed = None;
+            continue;
+        }
+        if let Some(snapshot) = rx.borrow_and_update().clone() {
+            return snapshot;
+        }
+    }
+}
+
+async fn wait_for_interval_tick(interval: &mut Option<tokio::time::Interval>) {
+    if let Some(iv) = interval.as_mut() {
+        iv.tick().await;
+    } else {
+        std::future::pending::<()>().await;
+    }
+}
+
 /// Starts the single-instance system tray indicator, background web dashboard,
 /// and periodic quota/shield refresh loop.
 ///
-/// Exits cleanly on `SIGINT`, `SIGTERM`, a `true` signal on `shutdown`, or
-/// [`TrayCommand::Quit`], shutting down the D-Bus tray service before releasing [`TrayLock`].
+/// Delegates to [`run_tray_with_feed`] with `feed = None`.
 ///
 /// # Errors
 ///
@@ -298,7 +425,31 @@ async fn wait_for_shutdown(shutdown: &mut Option<tokio::sync::watch::Receiver<bo
 pub async fn run_tray(
     interval_secs: u64,
     lock_path: Option<&Path>,
+    shutdown: Option<tokio::sync::watch::Receiver<bool>>,
+) -> Result<(), TrayError> {
+    run_tray_with_feed(interval_secs, lock_path, shutdown, None).await
+}
+
+/// Starts the single-instance system tray indicator, background web dashboard,
+/// and either a daemon snapshot feed or a periodic quota/shield refresh loop.
+///
+/// When `feed` is `Some(rx)`, skips duplicate periodic polling and updates [`TrayState`]
+/// whenever `rx.changed()` yields `Some(snapshot)`. Also spawns the desktop notification
+/// action listener and aborts it on clean shutdown.
+///
+/// Exits cleanly on `SIGINT`, `SIGTERM`, a `true` signal on `shutdown`, or
+/// [`TrayCommand::Quit`], shutting down the D-Bus tray service before releasing [`TrayLock`].
+///
+/// # Errors
+///
+/// Returns [`TrayError::Lock`] if acquiring the tray lockfile fails with an I/O error,
+/// [`TrayError::Dbus`] if registering the `ksni` StatusNotifierItem service fails, or
+/// [`TrayError::Io`] if installing OS signal handlers fails.
+pub async fn run_tray_with_feed(
+    interval_secs: u64,
+    lock_path: Option<&Path>,
     mut shutdown: Option<tokio::sync::watch::Receiver<bool>>,
+    mut feed: Option<tokio::sync::watch::Receiver<Option<crate::daemon::DaemonTickSnapshot>>>,
 ) -> Result<(), TrayError> {
     if shutdown.as_ref().is_some_and(|rx| *rx.borrow()) {
         return Ok(());
@@ -366,6 +517,7 @@ pub async fn run_tray(
         is_balancer_enabled: bal_cfg.enabled,
         balancer_strategy: bal_cfg.strategy,
         backup_candidate: None,
+        account_quotas: HashMap::new(),
     };
 
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel::<TrayCommand>();
@@ -381,10 +533,20 @@ pub async fn run_tray(
     let service = tray.assume_sni_available(true).spawn().await?;
     println!("[Tray] Registered StatusNotifierItem service.");
 
-    // 5. Periodic update loop (first tick fires immediately to fetch live data)
-    let mut interval = tokio::time::interval(Duration::from_secs(interval_secs.max(1)));
+    // 5. Event loop driven either by daemon snapshot feed or standalone periodic polling
+    let mut interval = feed
+        .is_none()
+        .then(|| tokio::time::interval(Duration::from_secs(interval_secs.max(1))));
     #[cfg(unix)]
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+
+    let action_listener_handle = {
+        let action_cmd_tx = cmd_tx.clone();
+        let action_state = Arc::clone(&shared_state);
+        crate::daemon::notifier::spawn_notification_action_listener(move |action| {
+            route_notification_action(&action, &action_state, &action_cmd_tx);
+        })
+    };
 
     loop {
         tokio::select! {
@@ -427,7 +589,10 @@ pub async fn run_tray(
                     }
                 }
             }
-            _ = interval.tick() => {
+            snapshot = wait_for_feed_snapshot(&mut feed) => {
+                apply_feed_snapshot(&snapshot, &storage, &shared_state, &service).await;
+            }
+            () = wait_for_interval_tick(&mut interval) => {
                 refresh_tray_state(
                     &storage,
                     &shared_state,
@@ -439,6 +604,7 @@ pub async fn run_tray(
         }
     }
 
+    action_listener_handle.abort();
     service.shutdown().await;
     Ok(())
 }
@@ -693,6 +859,300 @@ mod tests {
         let (tx, rx) = tokio::sync::watch::channel(true);
         drop(tx);
         let res = run_tray(60, Some(&lock_file), Some(rx)).await;
+        assert!(res.is_ok() || matches!(res, Err(TrayError::Dbus(_)) | Err(TrayError::Lock(_))));
+    }
+
+    #[test]
+    fn test_build_tray_state_populates_account_quotas_and_renders_submenu_labels() {
+        use ksni::{MenuItem, Tray};
+
+        let mut q_map = HashMap::new();
+        q_map.insert(
+            "Active@Example.COM".to_string(),
+            AccountQuotaResult {
+                email: "Active@Example.COM".into(),
+                name: "Active".into(),
+                tier: "Pro".into(),
+                is_current_desktop_session: true,
+                is_current_ide_session: false,
+                groups: vec![crate::storage::models::QuotaGroup {
+                    display_name: "Gemini 2.5 Pro".into(),
+                    weekly: Some(crate::storage::models::QuotaBucket {
+                        remaining_percent: Some(55.0),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }],
+                models: vec![],
+                checked_at: 1000.0,
+                is_cached: false,
+                error: None,
+            },
+        );
+        q_map.insert(
+            "Standby@Example.COM".to_string(),
+            AccountQuotaResult {
+                email: "Standby@Example.COM".into(),
+                name: "Standby".into(),
+                tier: "Pro".into(),
+                is_current_desktop_session: false,
+                is_current_ide_session: false,
+                groups: vec![crate::storage::models::QuotaGroup {
+                    display_name: "Gemini 2.5 Pro".into(),
+                    weekly: Some(crate::storage::models::QuotaBucket {
+                        remaining_percent: Some(91.2),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }],
+                models: vec![],
+                checked_at: 1000.0,
+                is_cached: false,
+                error: None,
+            },
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let accounts = vec![
+            AccountProfile {
+                email: "Active@Example.COM".into(),
+                is_current_desktop_session: Some(true),
+                ..Default::default()
+            },
+            AccountProfile {
+                email: "Standby@Example.COM".into(),
+                ..Default::default()
+            },
+            AccountProfile {
+                email: "unpolled@example.com".into(),
+                ..Default::default()
+            },
+        ];
+
+        let state = build_tray_state_from_data(TrayStateInput {
+            quotas: &q_map,
+            accounts,
+            geo_info: &EgressGeo::default(),
+            is_shield_enabled: false,
+            is_balancer_enabled: false,
+            balancer_strategy: BalancerStrategy::ExpiryFirst,
+            backup_candidate: Some(("Standby@Example.COM".into(), 91.2)),
+            icon_cache_dir: dir.path(),
+        });
+
+        assert_eq!(state.account_quotas.get("active@example.com"), Some(&55.0));
+        assert_eq!(state.account_quotas.get("standby@example.com"), Some(&91.2));
+
+        let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+        let tray = AntigravityTray {
+            state: Arc::new(Mutex::new(state)),
+            cmd_tx,
+        };
+        let labels: Vec<String> = tray
+            .menu()
+            .into_iter()
+            .find_map(|item| match item {
+                MenuItem::SubMenu(sub) if sub.label == "🔄 Switch Account" => Some(
+                    sub.submenu
+                        .into_iter()
+                        .filter_map(|sub_item| match sub_item {
+                            MenuItem::Standard(std_item) => Some(std_item.label),
+                            _ => None,
+                        })
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .expect("expected Switch Account submenu");
+
+        assert_eq!(
+            labels,
+            vec![
+                "⚡ Switch to Standby@Example.COM (91.2%)",
+                "⚡ Switch to unpolled@example.com",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_daemon_tick_snapshot_maps_to_tray_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = StorageManager::new(dir.path());
+        let mut reg = crate::storage::models::AccountsRegistry::default();
+        reg.accounts.insert(
+            "active@example.com".into(),
+            AccountProfile {
+                email: "active@example.com".into(),
+                is_current_desktop_session: Some(true),
+                ..Default::default()
+            },
+        );
+        reg.accounts.insert(
+            "standby@example.com".into(),
+            AccountProfile {
+                email: "standby@example.com".into(),
+                ..Default::default()
+            },
+        );
+        storage.save_accounts(&reg).unwrap();
+
+        let shield_cfg = crate::shield::models::ShieldConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        crate::shield::shield::save_shield_config(storage.config_dir(), &shield_cfg).unwrap();
+
+        let mut quotas = HashMap::new();
+        quotas.insert(
+            "active@example.com".to_string(),
+            AccountQuotaResult {
+                email: "active@example.com".into(),
+                name: "Active".into(),
+                tier: "Pro".into(),
+                is_current_desktop_session: true,
+                is_current_ide_session: false,
+                groups: vec![crate::storage::models::QuotaGroup {
+                    display_name: "Gemini 2.5 Pro".into(),
+                    weekly: Some(crate::storage::models::QuotaBucket {
+                        remaining_percent: Some(33.5),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }],
+                models: vec![],
+                checked_at: 1000.0,
+                is_cached: false,
+                error: None,
+            },
+        );
+        quotas.insert(
+            "standby@example.com".to_string(),
+            AccountQuotaResult {
+                email: "standby@example.com".into(),
+                name: "Standby".into(),
+                tier: "Pro".into(),
+                is_current_desktop_session: false,
+                is_current_ide_session: false,
+                groups: vec![crate::storage::models::QuotaGroup {
+                    display_name: "Gemini 2.5 Pro".into(),
+                    weekly: Some(crate::storage::models::QuotaBucket {
+                        remaining_percent: Some(88.0),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }],
+                models: vec![],
+                checked_at: 1000.0,
+                is_cached: false,
+                error: None,
+            },
+        );
+
+        let snapshot = crate::daemon::DaemonTickSnapshot {
+            quotas,
+            geo: EgressGeo {
+                ip: "1.2.3.4".into(),
+                country_code: "US".into(),
+                is_restricted: false,
+                ..Default::default()
+            },
+            balancer_triggered: true,
+            failover_triggered: false,
+        };
+
+        let icon_dir = dir.path().join("icons");
+        let state = build_tray_state_from_snapshot(&snapshot, &storage, &icon_dir);
+
+        assert_eq!(state.indicator, QuotaIndicator::Available(33.5));
+        assert_eq!(state.active_email.as_deref(), Some("active@example.com"));
+        assert_eq!(state.geo_summary, "1.2.3.4 (US)");
+        assert!(!state.is_restricted);
+        assert!(state.is_shield_enabled);
+        assert_eq!(state.accounts.len(), 2);
+        assert_eq!(state.account_quotas.get("active@example.com"), Some(&33.5));
+        assert_eq!(state.account_quotas.get("standby@example.com"), Some(&88.0));
+    }
+
+    #[test]
+    fn test_toggle_shield_emits_sse_event() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = StorageManager::new(dir.path());
+        crate::shield::shield::save_shield_config(
+            storage.config_dir(),
+            &crate::shield::models::ShieldConfig {
+                enabled: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut rx = crate::web::server::subscribe_events();
+
+        let icon_dir = dir.path().join("icons");
+        let state = build_tray_state_from_data(TrayStateInput {
+            quotas: &HashMap::new(),
+            accounts: vec![],
+            geo_info: &EgressGeo::default(),
+            is_shield_enabled: false,
+            is_balancer_enabled: false,
+            balancer_strategy: BalancerStrategy::ExpiryFirst,
+            backup_candidate: None,
+            icon_cache_dir: &icon_dir,
+        });
+        let shared_state = Arc::new(Mutex::new(state));
+
+        let enabled = toggle_shield_and_broadcast(&storage, &shared_state);
+        assert!(enabled);
+        assert!(shared_state.lock().unwrap().is_shield_enabled);
+
+        let mut found_shield_event = false;
+        while let Ok(raw) = rx.try_recv() {
+            if raw.contains("\"type\":\"shield_updated\"") && raw.contains("\"enabled\":true") {
+                found_shield_event = true;
+                break;
+            }
+        }
+        assert!(found_shield_event, "expected shield_updated SSE event");
+    }
+
+    #[test]
+    fn test_route_notification_action_handles_switch_best_and_open_dashboard() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = build_tray_state_from_data(TrayStateInput {
+            quotas: &HashMap::new(),
+            accounts: vec![],
+            geo_info: &EgressGeo::default(),
+            is_shield_enabled: false,
+            is_balancer_enabled: false,
+            balancer_strategy: BalancerStrategy::ExpiryFirst,
+            backup_candidate: Some(("best@example.com".into(), 94.0)),
+            icon_cache_dir: dir.path(),
+        });
+        let shared_state = Arc::new(Mutex::new(state));
+        let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        route_notification_action("switch_best", &shared_state, &cmd_tx);
+        assert_eq!(
+            cmd_rx.try_recv().unwrap(),
+            TrayCommand::SwitchAccount("best@example.com".into())
+        );
+
+        route_notification_action("open_dashboard", &shared_state, &cmd_tx);
+        assert_eq!(cmd_rx.try_recv().unwrap(), TrayCommand::OpenDashboard);
+
+        route_notification_action("unknown_action", &shared_state, &cmd_tx);
+        assert!(cmd_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_run_tray_with_feed_graceful_shutdown_via_watch() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock_file = dir.path().join("tray_feed.lock");
+        let (shut_tx, shut_rx) = tokio::sync::watch::channel(true);
+        let (_snap_tx, snap_rx) =
+            tokio::sync::watch::channel::<Option<crate::daemon::DaemonTickSnapshot>>(None);
+        drop(shut_tx);
+
+        let res = run_tray_with_feed(60, Some(&lock_file), Some(shut_rx), Some(snap_rx)).await;
         assert!(res.is_ok() || matches!(res, Err(TrayError::Dbus(_)) | Err(TrayError::Lock(_))));
     }
 }
