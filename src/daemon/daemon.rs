@@ -1,12 +1,16 @@
 use super::failover::evaluate_and_execute_failover;
-use crate::balancer::evaluate_and_execute_balancer;
+use super::models::{DaemonTickSnapshot, FailoverDecision};
+use crate::balancer::{BalancerDecision, evaluate_and_execute_balancer};
 use crate::quota::AccountQuotaResult;
+use crate::shield::EgressGeo;
 use crate::storage::StorageManager;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+/// Returns the default path to the JSONL token history log file.
+#[must_use]
 pub fn default_token_history_file() -> PathBuf {
     dirs::home_dir().map_or_else(
         || PathBuf::from(".gemini/antigravity/token_history.jsonl"),
@@ -14,6 +18,11 @@ pub fn default_token_history_file() -> PathBuf {
     )
 }
 
+/// Appends a timestamped quota snapshot line for all analyzed accounts to `history_file` (or the default log path).
+///
+/// # Errors
+///
+/// Returns an `std::io::Error` if opening, serializing, or writing to the history file fails.
 pub fn record_token_history_snapshot(
     analyzed_quotas: &HashMap<String, AccountQuotaResult>,
     history_file: Option<&Path>,
@@ -82,7 +91,7 @@ impl FailoverRestart {
     }
 }
 
-/// Configuration options for [`run_daemon_with_options`] and [`run_daemon_step_with_options`].
+/// Configuration options for [`run_daemon_with_options`], [`run_daemon_with_snapshot`], and [`run_daemon_step_with_options`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DaemonRunOptions {
     /// Polling interval in seconds between daemon iterations.
@@ -117,7 +126,7 @@ impl DaemonRunOptions {
     }
 }
 
-/// Errors returned by [`run_daemon_with_options`].
+/// Errors returned by [`run_daemon`], [`run_daemon_with_options`], and [`run_daemon_with_snapshot`].
 #[derive(Debug, thiserror::Error)]
 pub enum DaemonError {
     /// Underlying I/O error from daemon execution.
@@ -125,17 +134,50 @@ pub enum DaemonError {
     Io(#[from] std::io::Error),
 }
 
-/// Executes a single daemon monitoring iteration using the supplied [`DaemonRunOptions`].
+pub(crate) fn publish_tick_updates(
+    quotas: HashMap<String, AccountQuotaResult>,
+    geo: EgressGeo,
+    balancer_res: &BalancerDecision,
+    failover_res: &FailoverDecision,
+    snapshot_tx: Option<&tokio::sync::watch::Sender<Option<DaemonTickSnapshot>>>,
+) {
+    crate::web::server::broadcast_event(
+        "quota_updated",
+        serde_json::json!({
+            "accounts": &quotas,
+            "geo": &geo,
+        }),
+    );
+    if balancer_res.triggered {
+        crate::web::server::broadcast_event("balancer_rotated", serde_json::json!(balancer_res));
+    }
+    if failover_res.triggered {
+        crate::web::server::broadcast_event("failover_triggered", serde_json::json!(failover_res));
+    }
+
+    if let Some(tx) = snapshot_tx {
+        let _ = tx.send(Some(DaemonTickSnapshot {
+            quotas,
+            geo,
+            balancer_triggered: balancer_res.triggered,
+            failover_triggered: failover_res.triggered,
+        }));
+    }
+}
+
+/// Executes a single daemon monitoring iteration, broadcasts SSE updates, and optionally publishes a [`DaemonTickSnapshot`].
 ///
 /// Returns `(balancer_triggered, failover_triggered)`.
-pub async fn run_daemon_step_with_options(
+pub async fn run_daemon_step_with_snapshot(
     storage: &StorageManager,
     history_file: Option<&Path>,
     options: &DaemonRunOptions,
+    snapshot_tx: Option<&tokio::sync::watch::Sender<Option<DaemonTickSnapshot>>>,
 ) -> (bool, bool) {
     // 1. Geo-Shield check
     let config_dir = crate::storage::default_config_dir();
-    let _ = crate::shield::evaluate_and_enforce_shield(&config_dir, None).await;
+    let shield_eval = crate::shield::evaluate_and_enforce_shield(&config_dir, None).await;
+    let geo = shield_eval.geo.unwrap_or_default();
 
     // 2. Sync from Antigravity
     let _ = crate::auth::sync_from_antigravity(storage).await;
@@ -159,9 +201,25 @@ pub async fn run_daemon_step_with_options(
     )
     .await;
 
+    publish_tick_updates(all_quotas, geo, &balancer_res, &failover_res, snapshot_tx);
+
     (balancer_res.triggered, failover_res.triggered)
 }
 
+/// Executes a single daemon monitoring iteration using the supplied [`DaemonRunOptions`].
+///
+/// Returns `(balancer_triggered, failover_triggered)`.
+pub async fn run_daemon_step_with_options(
+    storage: &StorageManager,
+    history_file: Option<&Path>,
+    options: &DaemonRunOptions,
+) -> (bool, bool) {
+    run_daemon_step_with_snapshot(storage, history_file, options, None).await
+}
+
+/// Executes a single daemon monitoring iteration using default [`DaemonRunOptions`].
+///
+/// Returns `(balancer_triggered, failover_triggered)`.
 pub async fn run_daemon_step(
     storage: &StorageManager,
     history_file: Option<&Path>,
@@ -169,14 +227,15 @@ pub async fn run_daemon_step(
     run_daemon_step_with_options(storage, history_file, &DaemonRunOptions::default()).await
 }
 
-/// Runs the periodic daemon monitoring loop with explicit [`DaemonRunOptions`] until `shutdown` signals `true`.
+/// Runs the periodic daemon monitoring loop with explicit [`DaemonRunOptions`] and optional [`DaemonTickSnapshot`] watch channel until `shutdown` signals `true`.
 ///
 /// # Errors
 ///
 /// Returns [`DaemonError`] if a fatal I/O failure occurs while running the daemon loop.
-pub async fn run_daemon_with_options(
+pub async fn run_daemon_with_snapshot(
     options: DaemonRunOptions,
     mut shutdown: Option<tokio::sync::watch::Receiver<bool>>,
+    snapshot_tx: Option<tokio::sync::watch::Sender<Option<DaemonTickSnapshot>>>,
 ) -> Result<(), DaemonError> {
     if shutdown.as_ref().is_some_and(|rx| *rx.borrow()) {
         return Ok(());
@@ -189,7 +248,7 @@ pub async fn run_daemon_with_options(
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                let _ = run_daemon_step_with_options(&storage, None, &options).await;
+                let _ = run_daemon_step_with_snapshot(&storage, None, &options, snapshot_tx.as_ref()).await;
             }
             () = async {
                 if let Some(ref mut rx) = shutdown {
@@ -208,16 +267,32 @@ pub async fn run_daemon_with_options(
     Ok(())
 }
 
+/// Runs the periodic daemon monitoring loop with explicit [`DaemonRunOptions`] until `shutdown` signals `true`.
+///
+/// # Errors
+///
+/// Returns [`DaemonError`] if a fatal I/O failure occurs while running the daemon loop.
+pub async fn run_daemon_with_options(
+    options: DaemonRunOptions,
+    shutdown: Option<tokio::sync::watch::Receiver<bool>>,
+) -> Result<(), DaemonError> {
+    run_daemon_with_snapshot(options, shutdown, None).await
+}
+
+/// Runs the periodic daemon monitoring loop with basic interval and auto-switch flags until `shutdown` signals `true`.
+///
+/// # Errors
+///
+/// Returns [`DaemonError`] if a fatal I/O failure occurs while running the daemon loop.
 pub async fn run_daemon(
     interval_secs: u64,
     auto_switch: bool,
     shutdown: Option<tokio::sync::watch::Receiver<bool>>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), DaemonError> {
     let options = DaemonRunOptions {
         interval_secs,
         auto_switch,
         ..DaemonRunOptions::default()
     };
-    run_daemon_with_options(options, shutdown).await?;
-    Ok(())
+    run_daemon_with_options(options, shutdown).await
 }

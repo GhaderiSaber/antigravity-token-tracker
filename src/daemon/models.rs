@@ -97,3 +97,16 @@ pub struct DoctorReport {
     pub overall_status: DiagnosticStatus,
     pub timestamp: f64,
 }
+
+/// Snapshot of account quotas, egress geolocation, and automation triggers produced by a daemon tick.
+#[derive(Debug, Clone)]
+pub struct DaemonTickSnapshot {
+    /// Latest fetched quota results keyed by account email.
+    pub quotas: std::collections::HashMap<String, crate::quota::AccountQuotaResult>,
+    /// Latest egress geolocation evaluated during the tick.
+    pub geo: crate::shield::EgressGeo,
+    /// Whether the auto-balancer rotated accounts during this tick.
+    pub balancer_triggered: bool,
+    /// Whether emergency failover switched accounts during this tick.
+    pub failover_triggered: bool,
+}
