@@ -1,25 +1,108 @@
-use crate::balancer::BalancerStrategy;
-use ksni::menu::*;
-use ksni::{Icon, MenuItem, ToolTip, Tray};
-use std::sync::{Arc, Mutex};
+//! System tray menu, state snapshot, and command channel definitions.
 
+use crate::balancer::BalancerStrategy;
+use crate::storage::models::AccountProfile;
+use crate::tray::icon::{QuotaIndicator, default_icon_cache_dir};
+use ksni::menu::{StandardItem, SubMenu};
+use ksni::{Icon, MenuItem, OfflineReason, ToolTip, Tray};
+use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc::UnboundedSender;
+
+/// Commands emitted by tray menu callbacks and icon activation for async handling.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TrayCommand {
+    /// Force-refresh account quotas and update the tray indicator immediately.
+    RefreshQuotas,
+    /// Toggle IP Killswitch Shield on or off and persist configuration.
+    ToggleShield,
+    /// Toggle Multi-Account Auto-Balancer on or off and persist configuration.
+    ToggleBalancer,
+    /// Switch the active Antigravity session to the given account email.
+    SwitchAccount(String),
+    /// Open the local web dashboard in the user's default browser.
+    OpenDashboard,
+    /// Exit the tray event loop cleanly so D-Bus and lock resources tear down.
+    Quit,
+}
+
+/// Shared snapshot of tray indicator status and menu data rendered by [`AntigravityTray`].
+#[derive(Debug, Clone)]
 pub struct TrayState {
-    pub min_pct: f64,
-    pub is_exhausted: bool,
+    /// Current quota indicator derived from active session usage.
+    pub indicator: QuotaIndicator,
+    /// Email address of the currently active session, if any.
+    pub active_email: Option<String>,
+    /// Human-readable active session status shown in the tooltip and menu header.
     pub active_summary: String,
+    /// Freedesktop icon theme name matching [`Self::indicator`].
     pub icon_name: String,
-    pub icon: Icon,
-    pub accounts: Vec<crate::storage::models::AccountProfile>,
+    /// Raw ARGB32 icon bytes shared across tooltip and pixmap queries.
+    pub icon_data: Arc<Vec<u8>>,
+    /// Width of [`Self::icon_data`] in pixels.
+    pub icon_width: i32,
+    /// Height of [`Self::icon_data`] in pixels.
+    pub icon_height: i32,
+    /// Registered accounts available to display in the switch submenu.
+    pub accounts: Vec<AccountProfile>,
+    /// Formatted egress IP and country code summary.
     pub geo_summary: String,
+    /// Whether the current egress IP is in a restricted region.
     pub is_restricted: bool,
+    /// Whether the IP Killswitch Shield is enabled.
     pub is_shield_enabled: bool,
+    /// Whether the Multi-Account Auto-Balancer is enabled.
     pub is_balancer_enabled: bool,
+    /// Configured rotation strategy for the Auto-Balancer.
     pub balancer_strategy: BalancerStrategy,
+    /// Highest-quota standby failover candidate `(email, remaining_percent)`, if any.
     pub backup_candidate: Option<(String, f64)>,
 }
 
+/// Filters registered accounts to those eligible for manual switching.
+///
+/// Excludes accounts matching `active_email` (case-insensitive, trimmed) and accounts
+/// currently marked as an active desktop or IDE session. Legacy `active == Some(true)`
+/// flags are intentionally ignored so stale registry entries do not hide valid targets.
+#[must_use]
+pub fn switchable_accounts<'a>(
+    accounts: &'a [AccountProfile],
+    active_email: Option<&str>,
+) -> Vec<&'a AccountProfile> {
+    let normalized_active = active_email
+        .map(|email| email.trim().to_lowercase())
+        .filter(|email| !email.is_empty());
+
+    accounts
+        .iter()
+        .filter(|acc| {
+            let matches_active_email = normalized_active
+                .as_deref()
+                .is_some_and(|active| acc.email.trim().to_lowercase() == active);
+            let is_desktop = acc.is_current_desktop_session == Some(true);
+            let is_ide = acc.is_current_ide_session == Some(true);
+            !matches_active_email && !is_desktop && !is_ide
+        })
+        .collect()
+}
+
+/// `ksni` StatusNotifierItem tray implementation backed by shared [`TrayState`]
+/// and a non-blocking [`TrayCommand`] channel.
+#[derive(Debug)]
 pub struct AntigravityTray {
+    /// Shared snapshot of tray status and menu data.
     pub state: Arc<Mutex<TrayState>>,
+    /// Channel sender used by synchronous D-Bus callbacks to dispatch async actions.
+    pub cmd_tx: UnboundedSender<TrayCommand>,
+}
+
+impl AntigravityTray {
+    fn snapshot(&self) -> TrayState {
+        self.state.lock().expect("tray state lock poisoned").clone()
+    }
+
+    fn send_cmd(&self, cmd: TrayCommand) {
+        let _ = self.cmd_tx.send(cmd);
+    }
 }
 
 impl Tray for AntigravityTray {
@@ -29,11 +112,7 @@ impl Tray for AntigravityTray {
 
     fn title(&self) -> String {
         let st = self.state.lock().expect("tray state lock poisoned");
-        if st.is_exhausted {
-            "Antigravity: Quota Exhausted".into()
-        } else {
-            format!("Antigravity: {:.1}%", st.min_pct)
-        }
+        st.indicator.title_text()
     }
 
     fn icon_name(&self) -> String {
@@ -42,48 +121,65 @@ impl Tray for AntigravityTray {
     }
 
     fn icon_theme_path(&self) -> String {
-        crate::tray::icon::default_icon_cache_dir()
-            .to_string_lossy()
-            .to_string()
+        default_icon_cache_dir().to_string_lossy().into_owned()
     }
 
     fn icon_pixmap(&self) -> Vec<Icon> {
-        let st = self.state.lock().expect("tray state lock poisoned");
+        let (width, height, data) = {
+            let st = self.state.lock().expect("tray state lock poisoned");
+            (st.icon_width, st.icon_height, Arc::clone(&st.icon_data))
+        };
         vec![Icon {
-            width: st.icon.width,
-            height: st.icon.height,
-            data: st.icon.data.clone(),
+            width,
+            height,
+            data: (*data).clone(),
         }]
     }
 
     fn tool_tip(&self) -> ToolTip {
-        let st = self.state.lock().expect("tray state lock poisoned");
+        let (description, icon_name, width, height, data) = {
+            let st = self.state.lock().expect("tray state lock poisoned");
+            (
+                st.active_summary.clone(),
+                st.icon_name.clone(),
+                st.icon_width,
+                st.icon_height,
+                Arc::clone(&st.icon_data),
+            )
+        };
         ToolTip {
             title: "Antigravity Token Tracker".into(),
-            description: st.active_summary.clone(),
-            icon_name: st.icon_name.clone(),
+            description,
+            icon_name,
             icon_pixmap: vec![Icon {
-                width: st.icon.width,
-                height: st.icon.height,
-                data: st.icon.data.clone(),
+                width,
+                height,
+                data: (*data).clone(),
             }],
         }
     }
 
     fn activate(&mut self, _x: i32, _y: i32) {
-        let _ = open::that("http://localhost:8765");
+        self.send_cmd(TrayCommand::OpenDashboard);
+    }
+
+    fn watcher_offline(&self, reason: OfflineReason) -> bool {
+        eprintln!(
+            "[Tray] Warning: StatusNotifierWatcher went offline ({reason:?}); waiting for reconnect."
+        );
+        true
     }
 
     fn menu(&self) -> Vec<MenuItem<Self>> {
-        let st = self.state.lock().expect("tray state lock poisoned");
+        let st = self.snapshot();
         let mut items = Vec::new();
 
         // 1. Open Web Dashboard
         items.push(
             StandardItem {
                 label: "🌐 Open Web Dashboard".into(),
-                activate: Box::new(|_| {
-                    let _ = open::that("http://localhost:8765");
+                activate: Box::new(|tray: &mut Self| {
+                    tray.send_cmd(TrayCommand::OpenDashboard);
                 }),
                 ..Default::default()
             }
@@ -101,8 +197,8 @@ impl Tray for AntigravityTray {
         items.push(
             StandardItem {
                 label: summary_label,
-                activate: Box::new(|_| {
-                    let _ = open::that("http://localhost:8765");
+                activate: Box::new(|tray: &mut Self| {
+                    tray.send_cmd(TrayCommand::OpenDashboard);
                 }),
                 ..Default::default()
             }
@@ -110,47 +206,22 @@ impl Tray for AntigravityTray {
         );
 
         // 3. Switch Account Submenu
-        let mut switch_sub = Vec::new();
-        for acc in &st.accounts {
-            if acc.active == Some(true) {
-                continue;
-            }
-            let email = acc.email.clone();
-            let email_capture = email.clone();
-            switch_sub.push(
-                StandardItem {
-                    label: format!("⚡ Switch to {email}"),
-                    activate: Box::new(move |_| {
-                        let target = email_capture.clone();
-                        tokio::spawn(async move {
-                            let (ok, msg) = match crate::balancer::switcher::switch_to_account(
-                                &target,
-                                true,
-                                crate::balancer::switcher::SwitchSurface::Both,
-                            )
-                            .await
-                            {
-                                Ok(m) => (true, m.to_string()),
-                                Err(e) => (false, e.to_string()),
-                            };
-                            let title = if ok {
-                                "✓ Account Switched"
-                            } else {
-                                "❌ Switch Failed"
-                            };
-                            let _ = crate::daemon::notifier::send_desktop_notification(
-                                title,
-                                &msg,
-                                if ok { "normal" } else { "critical" },
-                            )
-                            .await;
-                        });
-                    }),
-                    ..Default::default()
-                }
-                .into(),
-            );
-        }
+        let mut switch_sub: Vec<MenuItem<Self>> =
+            switchable_accounts(&st.accounts, st.active_email.as_deref())
+                .into_iter()
+                .map(|acc| {
+                    let email = acc.email.clone();
+                    let email_capture = email.clone();
+                    StandardItem {
+                        label: format!("⚡ Switch to {email}"),
+                        activate: Box::new(move |tray: &mut Self| {
+                            tray.send_cmd(TrayCommand::SwitchAccount(email_capture.clone()));
+                        }),
+                        ..Default::default()
+                    }
+                    .into()
+                })
+                .collect();
 
         if switch_sub.is_empty() {
             switch_sub.push(
@@ -185,8 +256,8 @@ impl Tray for AntigravityTray {
             format!("⚠️ RESTRICTED: {} (VPN Required!)", st.geo_summary)
         } else if !st.geo_summary.is_empty() {
             format!(
-                "{} IP: {} [Shield: {}]",
-                shield_icon, st.geo_summary, shield_state
+                "{shield_icon} IP: {} [Shield: {shield_state}]",
+                st.geo_summary
             )
         } else {
             format!("{shield_icon} IP Killswitch Shield: [{shield_state}]")
@@ -195,24 +266,8 @@ impl Tray for AntigravityTray {
         items.push(
             StandardItem {
                 label: shield_label,
-                activate: Box::new(|_| {
-                    let storage = crate::storage::StorageManager::default();
-                    let mut cfg = crate::shield::shield::load_shield_config(storage.config_dir());
-                    cfg.enabled = !cfg.enabled;
-                    let _ = crate::shield::shield::save_shield_config(storage.config_dir(), &cfg);
-                    let desc = if cfg.enabled {
-                        "ACTIVATED (Auto-terminates Antigravity if VPN drops)"
-                    } else {
-                        "DISABLED"
-                    };
-                    tokio::spawn(async move {
-                        let _ = crate::daemon::notifier::send_desktop_notification(
-                            "🛡️ IP Shield Protection",
-                            &format!("IP Killswitch Shield is now {desc}."),
-                            "normal",
-                        )
-                        .await;
-                    });
+                activate: Box::new(|tray: &mut Self| {
+                    tray.send_cmd(TrayCommand::ToggleShield);
                 }),
                 ..Default::default()
             }
@@ -225,31 +280,8 @@ impl Tray for AntigravityTray {
             items.push(
                 StandardItem {
                     label: format!("⚡ Failover: Auto-Switch ({cand} {cand_pct:.1}%)"),
-                    activate: Box::new(move |_| {
-                        let target = cand.clone();
-                        tokio::spawn(async move {
-                            let (ok, msg) = match crate::balancer::switcher::switch_to_account(
-                                &target,
-                                true,
-                                crate::balancer::switcher::SwitchSurface::Both,
-                            )
-                            .await
-                            {
-                                Ok(m) => (true, m.to_string()),
-                                Err(e) => (false, e.to_string()),
-                            };
-                            let title = if ok {
-                                "✓ Account Switched"
-                            } else {
-                                "❌ Switch Failed"
-                            };
-                            let _ = crate::daemon::notifier::send_desktop_notification(
-                                title,
-                                &msg,
-                                if ok { "normal" } else { "critical" },
-                            )
-                            .await;
-                        });
+                    activate: Box::new(move |tray: &mut Self| {
+                        tray.send_cmd(TrayCommand::SwitchAccount(cand.clone()));
                     }),
                     ..Default::default()
                 }
@@ -276,19 +308,8 @@ impl Tray for AntigravityTray {
         items.push(
             StandardItem {
                 label: format!("{bal_icon} Auto-Balancer: [{bal_state} - {bal_strat}]"),
-                activate: Box::new(|_| {
-                    let mut cfg = crate::balancer::balancer::load_balancer_config();
-                    cfg.enabled = !cfg.enabled;
-                    let _ = crate::balancer::balancer::save_balancer_config(&cfg);
-                    let desc = if cfg.enabled { "ENABLED" } else { "DISABLED" };
-                    tokio::spawn(async move {
-                        let _ = crate::daemon::notifier::send_desktop_notification(
-                            "🔄 Auto-Balancer",
-                            &format!("Multi-account pool rotation is now {desc}."),
-                            "normal",
-                        )
-                        .await;
-                    });
+                activate: Box::new(|tray: &mut Self| {
+                    tray.send_cmd(TrayCommand::ToggleBalancer);
                 }),
                 ..Default::default()
             }
@@ -301,10 +322,8 @@ impl Tray for AntigravityTray {
         items.push(
             StandardItem {
                 label: "↻ Refresh Quotas".into(),
-                activate: Box::new(|_| {
-                    tokio::spawn(async {
-                        let _ = crate::quota::quota::fetch_all_accounts_quota(true).await;
-                    });
+                activate: Box::new(|tray: &mut Self| {
+                    tray.send_cmd(TrayCommand::RefreshQuotas);
                 }),
                 ..Default::default()
             }
@@ -315,8 +334,8 @@ impl Tray for AntigravityTray {
         items.push(
             StandardItem {
                 label: "❌ Quit Applet".into(),
-                activate: Box::new(|_| {
-                    std::process::exit(0);
+                activate: Box::new(|tray: &mut Self| {
+                    tray.send_cmd(TrayCommand::Quit);
                 }),
                 ..Default::default()
             }
