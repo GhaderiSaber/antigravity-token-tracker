@@ -1,29 +1,21 @@
-use std::ffi::OsString;
+use std::collections::BTreeSet;
+use std::future::Future;
 use std::process::ExitCode;
 
-use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
+use clap::error::{ContextKind, ContextValue, ErrorKind};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
+use tracker_lib::balancer::{BalancerStrategy, SwitchSurface};
+use tracker_lib::daemon::{DaemonRunOptions, FailoverRestart};
 use tracker_lib::shield::models::{ShieldAction, ShieldMode};
 
-const ROOT: &str = "run_tracker";
-
-fn report_fallbacks() {
-    if let Some(path) = std::env::var_os("RUST_ANYTHING_FALLBACK_LOG") {
-        let _ = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path);
-    }
-}
-
-fn print_root_help() {
-    print!(
-        r"usage: agy-token [-h]
-                 {{status,shield,ip,watch,check,sync,snapshot,save,list,remove,daemon,web,tray,switch,doctor,balance,pace,burn,test-notify,notify-test,test-toast}} ...
+const ROOT_HELP: &str = "\
+usage: agy-token [-h]
+                 {status,shield,ip,watch,check,sync,snapshot,save,list,remove,daemon,web,tray,switch,doctor,balance,pace,burn,test-notify,notify-test,test-toast} ...
 
 Antigravity Account Token & Quota Lifecycle Tracker
 
 positional arguments:
-  {{status,shield,ip,watch,check,sync,snapshot,save,list,remove,daemon,web,tray,switch,doctor,balance,pace,burn,test-notify,notify-test,test-toast}}
+  {status,shield,ip,watch,check,sync,snapshot,save,list,remove,daemon,web,tray,switch,doctor,balance,pace,burn,test-notify,notify-test,test-toast}
                         Available subcommands
     status              Show token quota status and weekly refresh countdowns
     shield              Manage Geo-Shield and emergency IP Killswitch
@@ -52,531 +44,891 @@ positional arguments:
                         Test 1-click desktop notification action buttons
 
 options:
-  -h, --help            show this help message and exit
-"
-    );
-}
+  -h, --help            show this help message and exit";
 
-fn rest() -> Arg {
-    Arg::new("args")
-        .num_args(0..)
-        .trailing_var_arg(true)
-        .allow_hyphen_values(true)
-        .value_parser(value_parser!(OsString))
-}
-
-fn cli_command() -> Command {
-    Command::new(ROOT)
-        .disable_help_flag(true)
-        .disable_version_flag(true)
-        .disable_help_subcommand(true)
-        .args_conflicts_with_subcommands(true)
-        .arg(rest())
-        .subcommand(
-            Command::new("balance")
-                .disable_help_flag(true)
-                .arg(Arg::new("help").long("help").action(ArgAction::Count))
-                .arg(rest()),
-        )
-        .subcommand(
-            Command::new("check")
-                .disable_help_flag(true)
-                .arg(Arg::new("help").long("help").action(ArgAction::Count))
-                .arg(rest()),
-        )
-        .subcommand(
-            Command::new("daemon")
-                .disable_help_flag(true)
-                .arg(Arg::new("help").long("help").action(ArgAction::Count))
-                .arg(rest()),
-        )
-        .subcommand(
-            Command::new("doctor")
-                .disable_help_flag(true)
-                .arg(Arg::new("help").long("help").action(ArgAction::Count))
-                .arg(rest()),
-        )
-        .subcommand(
-            Command::new("ip")
-                .disable_help_flag(true)
-                .arg(Arg::new("help").long("help").action(ArgAction::Count))
-                .arg(rest()),
-        )
-        .subcommand(
-            Command::new("list")
-                .disable_help_flag(true)
-                .arg(Arg::new("help").long("help").action(ArgAction::Count))
-                .arg(rest()),
-        )
-        .subcommand(
-            Command::new("pace")
-                .disable_help_flag(true)
-                .arg(Arg::new("help").long("help").action(ArgAction::Count))
-                .arg(rest()),
-        )
-        .subcommand(
-            Command::new("shield")
-                .disable_help_flag(true)
-                .arg(Arg::new("help").long("help").action(ArgAction::Count))
-                .arg(rest()),
-        )
-        .subcommand(
-            Command::new("status")
-                .disable_help_flag(true)
-                .arg(Arg::new("help").long("help").action(ArgAction::Count))
-                .arg(rest()),
-        )
-        .subcommand(
-            Command::new("sync")
-                .disable_help_flag(true)
-                .arg(Arg::new("help").long("help").action(ArgAction::Count))
-                .arg(rest()),
-        )
-        .subcommand(
-            Command::new("tray")
-                .disable_help_flag(true)
-                .arg(Arg::new("help").long("help").action(ArgAction::Count))
-                .arg(rest()),
-        )
-        .subcommand(
-            Command::new("web")
-                .disable_help_flag(true)
-                .arg(Arg::new("help").long("help").action(ArgAction::Count))
-                .arg(rest()),
-        )
-}
-
-fn dispatch(command: &str, matches: &ArgMatches) -> Option<ExitCode> {
-    match command {
-        "list" => Some(run_list(command, matches)),
-        "shield" => Some(run_shield(command, matches)),
-        "sync" => Some(run_sync(command, matches)),
-        "pace" | "check" => Some(run_pace_check(command, matches)),
-        "balance" => Some(run_balance(command, matches)),
-        "daemon" | "doctor" => Some(run_daemon_doctor(command, matches)),
-        "web" => Some(run_web(command, matches)),
-        "status" | "ip" => Some(run_status_ip(command, matches)),
-        "tray" => Some(run_tray(command, matches)),
-        _ => None,
-    }
-}
-
-fn print_list_help() {
-    print!(
-        r"usage: agy-token list [-h]
+const STATUS_HELP: &str = "\
+usage: agy-token status [-h] [--models] [--force]
 
 options:
   -h, --help  show this help message and exit
-"
-    );
-}
+  --models    Display all individual model quotas
+  --force     Bypass local cache and query Google directly";
 
-fn account_display_priority(acc: &tracker_lib::storage::AccountProfile) -> u8 {
-    let is_desktop = acc.is_current_desktop_session.unwrap_or(false);
-    let is_ide = acc.is_current_ide_session.unwrap_or(false);
-    if is_desktop && is_ide {
-        0
-    } else if is_desktop {
-        1
-    } else if is_ide {
-        2
-    } else {
-        3
-    }
-}
-
-fn run_list(command: &str, _matches: &ArgMatches) -> ExitCode {
-    let argv: Vec<OsString> = std::env::args_os().collect();
-    if argv.iter().any(|a| a == "--help" || a == "-h") {
-        print_list_help();
-        return ExitCode::SUCCESS;
-    }
-
-    if command == "list" {
-        let storage = tracker_lib::storage::StorageManager::default();
-        let all_accs = match storage.list_accounts() {
-            Ok(accs) => accs,
-            Err(e) => {
-                eprintln!("Error reading accounts: {e}");
-                return ExitCode::FAILURE;
-            }
-        };
-
-        if all_accs.is_empty() {
-            println!("No accounts registered yet.");
-            return ExitCode::SUCCESS;
-        }
-
-        let mut sorted = all_accs;
-        sorted.sort_by(|a, b| {
-            let prio_a = account_display_priority(a);
-            let prio_b = account_display_priority(b);
-            prio_a
-                .cmp(&prio_b)
-                .then_with(|| a.email.to_lowercase().cmp(&b.email.to_lowercase()))
-        });
-
-        println!("                       Registered Antigravity Accounts                        ");
-        println!(" Email                       Name            Tier            Active Surface   ");
-
-        for acc in sorted {
-            let email = &acc.email;
-            let name = acc.name.as_deref().unwrap_or("");
-            let tier = acc.tier.as_deref().unwrap_or("Standard");
-
-            let email_col = format!(" {email:<28}");
-            let name_col = format!("{name:<16}");
-
-            if acc.is_current_desktop_session == Some(true)
-                && acc.is_current_ide_session == Some(true)
-            {
-                println!("{email_col}{name_col}{tier}   App + IDE    ");
-            } else if acc.is_current_desktop_session == Some(true) {
-                println!("{email_col}{name_col}{tier}   Antigravity App  ");
-            } else if acc.is_current_ide_session == Some(true) {
-                println!("{email_col}{name_col}{tier}   Antigravity IDE  ");
-            } else {
-                println!("{email_col}{name_col}{tier}  Inactive / Stored ");
-            }
-        }
-
-        return ExitCode::SUCCESS;
-    }
-
-    ExitCode::SUCCESS
-}
-
-fn print_shield_help() {
-    print!(
-        r"usage: agy-token shield [-h] [--mode {{restricted,whitelist}}]
+const SHIELD_USAGE: &str = "\
+usage: agy-token shield [-h] [--mode {restricted,whitelist}]
                         [--allow COUNTRIES]
-                        [--action {{kill_process,kill_network,both}}]
-                        [{{status,on,enable,off,disable,mode,allow,action,trigger}}]
+                        [--action {kill_process,kill_network,both}]
+                        [{status,on,enable,off,disable,mode,allow,action,trigger}]
+                        [extra_arg]";
+
+const SHIELD_HELP: &str = "\
+usage: agy-token shield [-h] [--mode {restricted,whitelist}]
+                        [--allow COUNTRIES]
+                        [--action {kill_process,kill_network,both}]
+                        [{status,on,enable,off,disable,mode,allow,action,trigger}]
                         [extra_arg]
 
 positional arguments:
-  {{status,on,enable,off,disable,mode,allow,action,trigger}}
+  {status,on,enable,off,disable,mode,allow,action,trigger}
                         Shield action to perform
   extra_arg             Parameter value for mode/allow/action
 
 options:
   -h, --help            show this help message and exit
-  --mode {{restricted,whitelist}}
+  --mode {restricted,whitelist}
                         Policy mode
   --allow COUNTRIES     Comma-separated country codes (e.g. US,DE,GB)
-  --action {{kill_process,kill_network,both}}
-                        Action on violation
-"
-    );
-}
+  --action {kill_process,kill_network,both}
+                        Action on violation";
 
-fn python_repr_choice(s: &str) -> String {
-    let mut out = String::new();
-    out.push('\'');
-    for c in s.chars() {
-        match c {
-            '\'' => out.push_str("\\'"),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{a0}' => out.push_str("\\xa0"),
-            '\u{200c}' => out.push_str("\\u200c"),
-            '\u{200d}' => out.push_str("\\u200d"),
-            c => out.push(c),
-        }
-    }
-    out.push('\'');
-    out
-}
-
-fn run_shield(command: &str, _matches: &ArgMatches) -> ExitCode {
-    let argv: Vec<OsString> = std::env::args_os().collect();
-    if argv.iter().any(|a| a == "--help" || a == "-h") {
-        print_shield_help();
-        return ExitCode::SUCCESS;
-    }
-
-    if command == "shield" {
-        let mut action_pos = None;
-        for (idx, arg) in argv.iter().enumerate().skip(1) {
-            let s = arg.to_string_lossy();
-            if s == "shield" {
-                action_pos = Some(idx + 1);
-                break;
-            }
-        }
-
-        let extra_args: Vec<String> = if let Some(pos) = action_pos {
-            argv[pos..]
-                .iter()
-                .map(|a| a.to_string_lossy().into_owned())
-                .collect()
-        } else {
-            Vec::new()
-        };
-
-        let action_str = extra_args.first().map_or("status", String::as_str);
-
-        let valid_actions = [
-            "status", "on", "enable", "off", "disable", "mode", "allow", "action", "trigger",
-        ];
-        if !valid_actions.contains(&action_str) {
-            let choice_repr = python_repr_choice(action_str);
-            eprintln!(
-                "usage: agy-token shield [-h] [--mode {{restricted,whitelist}}]\n                        [--allow COUNTRIES]\n                        [--action {{kill_process,kill_network,both}}]\n                        [{{status,on,enable,off,disable,mode,allow,action,trigger}}]\n                        [extra_arg]\nagy-token shield: error: argument shield_action: invalid choice: {choice_repr} (choose from status, on, enable, off, disable, mode, allow, action, trigger)"
-            );
-            return ExitCode::from(2);
-        }
-
-        let storage = tracker_lib::storage::StorageManager::default();
-        let config_dir = storage.config_dir();
-        let mut cfg = tracker_lib::shield::load_shield_config(config_dir);
-
-        match action_str {
-            "on" | "enable" => {
-                let _ = tracker_lib::shield::enable_shield(config_dir);
-                println!("✓ IP Killswitch Shield ENABLED.");
-                println!(
-                    "Antigravity processes will be automatically terminated if VPN drops or restricted IP is detected.\n"
-                );
-                return ExitCode::SUCCESS;
-            }
-            "off" | "disable" => {
-                let _ = tracker_lib::shield::disable_shield(config_dir);
-                println!("⚠️ IP Killswitch Shield DISABLED.\n");
-                return ExitCode::SUCCESS;
-            }
-            "mode" => {
-                let target = extra_args.get(1).map_or("", String::as_str);
-                let mode: ShieldMode = match target.parse() {
-                    Ok(m) => m,
-                    Err(_) => {
-                        println!(
-                            "Invalid mode. Specify: `agy-token shield mode restricted` or `agy-token shield mode whitelist`."
-                        );
-                        return ExitCode::from(1);
-                    }
-                };
-                cfg.mode = mode;
-                let _ = tracker_lib::shield::save_shield_config(config_dir, &cfg);
-                println!("✓ Shield mode set to: {mode}\n");
-                return ExitCode::SUCCESS;
-            }
-            "allow" => {
-                let list_str = extra_args.get(1).map_or("", String::as_str);
-                if list_str.is_empty() {
-                    println!("Please specify country codes: `agy-token shield allow US,DE,GB`.");
-                    return ExitCode::from(1);
-                }
-                let countries: Vec<String> = list_str
-                    .split(',')
-                    .map(|c| c.trim().to_uppercase())
-                    .filter(|c| !c.is_empty())
-                    .collect();
-                cfg.allowed_countries.clone_from(&countries);
-                let _ = tracker_lib::shield::save_shield_config(config_dir, &cfg);
-                println!(
-                    "✓ Allowed countries whitelist updated to: {}\n",
-                    countries.join(", ")
-                );
-                return ExitCode::SUCCESS;
-            }
-            "action" => {
-                let act = extra_args.get(1).map_or("", String::as_str);
-                let action: ShieldAction = match act.parse() {
-                    Ok(a) => a,
-                    Err(_) => {
-                        println!(
-                            "Invalid action. Choose 'kill_process', 'kill_network', or 'both'."
-                        );
-                        return ExitCode::from(1);
-                    }
-                };
-                cfg.action = action;
-                let _ = tracker_lib::shield::save_shield_config(config_dir, &cfg);
-                println!("✓ Shield enforcement action set to: {action}\n");
-                return ExitCode::SUCCESS;
-            }
-            "trigger" => {
-                println!("🚨 Manually triggering IP Killswitch emergency action...");
-                let (cnt, pids) = tracker_lib::shield::kill_antigravity_processes(true);
-                println!("✓ Terminated {cnt} Antigravity process(es) (PIDs: {pids:?}).\n");
-                return ExitCode::SUCCESS;
-            }
-            _ => {
-                // status
-                let Ok(rt) = tokio::runtime::Runtime::new() else {
-                    return ExitCode::from(1);
-                };
-                let geo_info = rt.block_on(tracker_lib::shield::get_ip_geo(false));
-                let (allowed, reason) = tracker_lib::shield::is_ip_allowed(&geo_info, &cfg);
-
-                let status_str = if cfg.enabled {
-                    "● ACTIVE (Protection ON)"
-                } else {
-                    "○ DISABLED (Protection OFF)"
-                };
-                let mode_str = match cfg.mode {
-                    ShieldMode::Whitelist => "Whitelist",
-                    ShieldMode::Restricted => "Restricted",
-                };
-                let action_val = cfg.action.to_string();
-                let whitelist_str = cfg.allowed_countries.join(", ");
-                let relaunch_str = if cfg.auto_relaunch { "Yes" } else { "No" };
-                let current_ip = format!(
-                    "{} {} ({}, {})",
-                    geo_info.flag, geo_info.ip, geo_info.country_name, geo_info.country_code
-                );
-                let policy_str = if allowed {
-                    "✓ COMPLIANT (Safe to run Antigravity)".to_string()
-                } else {
-                    format!("⚠️ VIOLATION: {reason}")
-                };
-
-                println!();
-                println!(
-                    "╭──────────────────────────────────────────────────────────────────────────────╮"
-                );
-                println!(
-                    "│         🛡️ Antigravity Geo-Shield & Killswitch Configuration                  │"
-                );
-                println!(
-                    "│  Property                    Value                                           │"
-                );
-                println!("│  {:<27} {:<47} │", "Shield Status", status_str);
-                println!("│  {:<27} {:<47} │", "Mode", mode_str);
-                println!("│  {:<27} {:<47} │", "Enforcement Action", action_val);
-                println!("│  {:<27} {:<47} │", "Allowed Whitelist", whitelist_str);
-                println!(
-                    "│  {:<27} {:<47} │",
-                    "Auto-Relaunch on Reconnect", relaunch_str
-                );
-                println!("│  {:<27} {:<47} │", "Current Egress IP", current_ip);
-                println!("│  {:<27} {:<47} │", "Policy Check", policy_str);
-                println!(
-                    "╰──────────────────────────────────────────────────────────────────────────────╯"
-                );
-                println!(
-                    "Commands: `agy-token shield on|off`, `agy-token shield mode \nrestricted|whitelist`, `agy-token shield allow US,DE,GB`\n"
-                );
-                return ExitCode::SUCCESS;
-            }
-        }
-    }
-
-    ExitCode::SUCCESS
-}
-
-fn print_sync_help() {
-    print!(
-        r"usage: agy-token sync [-h]
+const IP_HELP: &str = "\
+usage: agy-token ip [-h] [--refresh] [--json]
 
 options:
   -h, --help  show this help message and exit
-"
-    );
-}
+  --refresh   Bypass 60s cache and re-query live IP service
+  --json      Output machine-readable JSON";
 
-fn run_sync(command: &str, _matches: &ArgMatches) -> ExitCode {
-    let argv: Vec<OsString> = std::env::args_os().collect();
-    if argv.iter().any(|a| a == "--help" || a == "-h") {
-        print_sync_help();
-        return ExitCode::SUCCESS;
-    }
-
-    if command == "sync" {
-        let storage = tracker_lib::storage::StorageManager::default();
-        let Ok(rt) = tokio::runtime::Runtime::new() else {
-            return ExitCode::FAILURE;
-        };
-
-        match rt.block_on(tracker_lib::auth::sync_from_antigravity(&storage)) {
-            Ok((active_email, all_accs)) => {
-                if let Some(em) = active_email {
-                    println!("✓ Successfully synced active session: {em}");
-                    println!("Total registered accounts: {}", all_accs.len());
-                    for (acc_email, acc) in all_accs {
-                        let mut surfaces = Vec::new();
-                        if acc.is_current_desktop_session == Some(true) {
-                            surfaces.push("Antigravity App");
-                        }
-                        if acc.is_current_ide_session == Some(true) {
-                            surfaces.push("Antigravity IDE");
-                        }
-                        let surface_str = if surfaces.is_empty() {
-                            "(Inactive / Stored)".to_string()
-                        } else {
-                            format!("({})", surfaces.join(", "))
-                        };
-                        let tier = acc.tier.as_deref().unwrap_or("Standard");
-                        println!("  • {acc_email} [{tier}] {surface_str}");
-                    }
-                } else {
-                    println!("No active Antigravity session found.");
-                }
-                return ExitCode::SUCCESS;
-            }
-            Err(e) => {
-                eprintln!("Error syncing from Antigravity: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-    }
-
-    ExitCode::SUCCESS
-}
-
-fn print_check_help() {
-    print!(
-        r"usage: agy-token check [-h] [--json] [--force]
+const CHECK_HELP: &str = "\
+usage: agy-token check [-h] [--json] [--force]
 
 options:
   -h, --help  show this help message and exit
   --json      Output machine-readable JSON
-  --force     Bypass local cache
-"
-    );
-}
+  --force     Bypass local cache";
 
-fn print_pace_help() {
-    print!(
-        r"usage: agy-token pace [-h] [--force]
+const LIST_HELP: &str = "\
+usage: agy-token list [-h]
+
+options:
+  -h, --help  show this help message and exit";
+
+const DAEMON_HELP: &str = "\
+usage: agy-token daemon [-h] [--interval INTERVAL] [--auto-switch]
+                        [--threshold THRESHOLD] [--cooldown COOLDOWN]
+                        [--no-restart] [--tray]
+
+options:
+  -h, --help            show this help message and exit
+  --interval INTERVAL   Polling interval in seconds (default: 300)
+  --auto-switch         Automatically switch session when active account quota
+                        runs out
+  --threshold THRESHOLD
+                        Quota percentage threshold to trigger auto-failover
+                        (default: 1.0%)
+  --cooldown COOLDOWN   Minimum seconds between auto-failovers (default: 120)
+  --no-restart          Swap session without restarting Antigravity
+  --tray                Launch top-bar system tray indicator alongside daemon";
+
+const WEB_HELP: &str = "\
+usage: agy-token web [-h] [--port PORT] [--bg]
+
+options:
+  -h, --help          show this help message and exit
+  --port PORT         Port to listen on (default: 8765)
+  --bg, --background  Run dashboard in background daemon thread instead of
+                      blocking";
+
+const TRAY_HELP: &str = "\
+usage: agy-token tray [-h] [--interval INTERVAL]
+
+options:
+  -h, --help           show this help message and exit
+  --interval INTERVAL  Polling interval in seconds (default: 60)";
+
+const DOCTOR_HELP: &str = "\
+usage: agy-token doctor [-h] [--fix] [--no-network]
+
+options:
+  -h, --help    show this help message and exit
+  --fix         Automatically repair file permissions, refresh stale tokens,
+                and restart services
+  --no-network  Skip remote Google OAuth token validation";
+
+const BALANCE_HELP: &str = "\
+usage: agy-token balance [-h]
+                         [--strategy {watermark,expiry_first,round_robin,reactive}]
+                         [--spread SPREAD] [--interval INTERVAL]
+                         [--expiry-window EXPIRY_WINDOW]
+                         [--min-quota MIN_QUOTA] [--dry-run] [--force]
+                         [{status,on,enable,off,disable,strategy,rotate,config}]
+                         [extra_arg]
+
+positional arguments:
+  {status,on,enable,off,disable,strategy,rotate,config}
+                        Action to perform (default: status)
+  extra_arg             Strategy name or value
+
+options:
+  -h, --help            show this help message and exit
+  --strategy {watermark,expiry_first,round_robin,reactive}
+                        Strategy mode
+  --spread SPREAD       Watermark spread percentage (e.g. 20.0)
+  --interval INTERVAL   Round-robin interval in minutes (e.g. 60)
+  --expiry-window EXPIRY_WINDOW
+                        Expiry first window in hours (e.g. 36)
+  --min-quota MIN_QUOTA
+                        Minimum quota percentage for candidate eligibility
+                        (e.g. 5.0)
+  --dry-run             Simulate rotation without executing switch
+  --force               Bypass cooldown and balancer enabled check";
+
+const PACE_HELP: &str = "\
+usage: agy-token pace [-h] [--force]
 
 options:
   -h, --help  show this help message and exit
-  --force     Bypass cache and refresh quotas directly
-"
-    );
+  --force     Bypass cache and refresh quotas directly";
+
+#[derive(Debug, Parser)]
+#[command(
+    name = "agy-token",
+    about = "Antigravity Account Token & Quota Lifecycle Tracker",
+    disable_version_flag = true,
+    disable_help_subcommand = true,
+    override_help = ROOT_HELP
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
 }
 
-fn run_pace_check(command: &str, _matches: &ArgMatches) -> ExitCode {
-    let argv: Vec<OsString> = std::env::args_os().collect();
-    if argv.iter().any(|a| a == "--help" || a == "-h") {
-        if command == "pace" || argv.iter().any(|a| a == "pace" || a == "burn") {
-            print_pace_help();
-        } else {
-            print_check_help();
+#[derive(Debug, PartialEq, Subcommand)]
+enum Commands {
+    /// Show token quota status and weekly refresh countdowns
+    Status(StatusArgs),
+    /// Manage Geo-Shield and emergency IP Killswitch
+    Shield(ShieldArgs),
+    /// Display public exit IP, geolocation, and Antigravity compatibility
+    Ip(IpArgs),
+    /// Live auto-updating dashboard
+    Watch(WatchArgs),
+    /// Fast exit-code / JSON check (for shell scripts/prompts)
+    Check(CheckArgs),
+    /// Sync active account from Antigravity IDE / app session
+    Sync,
+    /// Explicitly capture and save session snapshots from active IDE / App
+    #[command(alias = "save")]
+    Snapshot(SnapshotArgs),
+    /// List all registered account profiles
+    List(ListArgs),
+    /// Remove an account from tracking
+    Remove(RemoveArgs),
+    /// Run background monitor with desktop alerts and auto-failover
+    Daemon(DaemonArgs),
+    /// Start interactive browser dashboard
+    Web(WebArgs),
+    /// Start native Linux top-bar / system tray applet
+    Tray(TrayArgs),
+    /// Instantly switch active account session
+    Switch(SwitchArgs),
+    /// Audit account tokens, system keyring, services, and 1-click switch readiness
+    Doctor(DoctorArgs),
+    /// Manage multi-account pool rotation & watermark balancing
+    Balance(BalanceArgs),
+    /// Display token burn rate velocity and Runout Clock prediction
+    #[command(alias = "burn")]
+    Pace(PaceArgs),
+    /// Test 1-click desktop notification action buttons
+    #[command(name = "test-notify", aliases = ["notify-test", "test-toast"])]
+    TestNotify,
+}
+
+#[derive(Debug, Args, PartialEq, Eq)]
+#[command(override_help = STATUS_HELP)]
+struct StatusArgs {
+    /// Display all individual model quotas
+    #[arg(long)]
+    models: bool,
+    /// Bypass local cache and query Google directly
+    #[arg(long)]
+    force: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+enum ShieldModeArg {
+    Restricted,
+    Whitelist,
+}
+
+impl From<ShieldModeArg> for ShieldMode {
+    fn from(value: ShieldModeArg) -> Self {
+        match value {
+            ShieldModeArg::Restricted => Self::Restricted,
+            ShieldModeArg::Whitelist => Self::Whitelist,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+enum ShieldActionArg {
+    KillProcess,
+    KillNetwork,
+    Both,
+}
+
+impl From<ShieldActionArg> for ShieldAction {
+    fn from(value: ShieldActionArg) -> Self {
+        match value {
+            ShieldActionArg::KillProcess => Self::KillProcess,
+            ShieldActionArg::KillNetwork => Self::KillNetwork,
+            ShieldActionArg::Both => Self::Both,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+enum ShieldActionCmd {
+    Status,
+    On,
+    Enable,
+    Off,
+    Disable,
+    Mode,
+    Allow,
+    Action,
+    Trigger,
+}
+
+#[derive(Debug, Args, PartialEq, Eq)]
+#[command(override_help = SHIELD_HELP)]
+struct ShieldArgs {
+    /// Policy mode
+    #[arg(long, value_enum)]
+    mode: Option<ShieldModeArg>,
+    /// Comma-separated country codes (e.g. US,DE,GB)
+    #[arg(long, value_name = "COUNTRIES")]
+    allow: Option<String>,
+    /// Action on violation
+    #[arg(long, value_enum)]
+    action: Option<ShieldActionArg>,
+    /// Shield action to perform
+    #[arg(value_enum, value_name = "shield_action")]
+    shield_action: Option<ShieldActionCmd>,
+    /// Parameter value for mode/allow/action
+    extra_arg: Option<String>,
+}
+
+#[derive(Debug, Args, PartialEq, Eq)]
+#[command(override_help = IP_HELP)]
+struct IpArgs {
+    /// Bypass 60s cache and re-query live IP service
+    #[arg(long)]
+    refresh: bool,
+    /// Output machine-readable JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args, PartialEq, Eq)]
+struct WatchArgs {
+    /// Refresh interval in seconds
+    #[arg(long, default_value_t = 5)]
+    interval: u64,
+    /// Bypass local cache and query Google directly
+    #[arg(long)]
+    force: bool,
+}
+
+#[derive(Debug, Args, PartialEq, Eq)]
+#[command(override_help = CHECK_HELP)]
+struct CheckArgs {
+    /// Output machine-readable JSON
+    #[arg(long)]
+    json: bool,
+    /// Bypass local cache
+    #[arg(long)]
+    force: bool,
+}
+
+#[derive(Debug, Args, PartialEq, Eq)]
+struct SnapshotArgs {
+    /// Account email to snapshot (defaults to active desktop/IDE sessions)
+    target: Option<String>,
+}
+
+#[derive(Debug, Args, PartialEq, Eq)]
+#[command(override_help = LIST_HELP)]
+struct ListArgs {}
+
+#[derive(Debug, Args, PartialEq, Eq)]
+struct RemoveArgs {
+    /// Account email, 1-based index, or name substring to remove
+    identifier: String,
+}
+
+#[derive(Debug, Args, PartialEq)]
+#[command(override_help = DAEMON_HELP)]
+struct DaemonArgs {
+    /// Polling interval in seconds
+    #[arg(long, default_value_t = 60)]
+    interval: u64,
+    /// Automatically switch session when active account quota runs out
+    #[arg(long)]
+    auto_switch: bool,
+    /// Quota percentage threshold to trigger auto-failover
+    #[arg(long, default_value_t = 1.0, value_parser = parse_finite_f64)]
+    threshold: f64,
+    /// Minimum seconds between auto-failovers
+    #[arg(long, default_value_t = 120.0, value_parser = parse_finite_f64)]
+    cooldown: f64,
+    /// Swap session without restarting Antigravity
+    #[arg(long)]
+    no_restart: bool,
+    /// Launch top-bar system tray indicator alongside daemon
+    #[arg(long)]
+    tray: bool,
+}
+
+#[derive(Debug, Args, PartialEq, Eq)]
+#[command(override_help = WEB_HELP)]
+struct WebArgs {
+    /// Port to listen on
+    #[arg(long, default_value_t = 8765)]
+    port: u16,
+    /// Run dashboard in background daemon process instead of blocking
+    #[arg(long = "bg", alias = "background")]
+    bg: bool,
+}
+
+#[derive(Debug, Args, PartialEq, Eq)]
+#[command(override_help = TRAY_HELP)]
+struct TrayArgs {
+    /// Polling interval in seconds
+    #[arg(long, default_value_t = 60)]
+    interval: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+enum SwitchSurfaceArg {
+    Desktop,
+    Ide,
+    Both,
+}
+
+impl From<SwitchSurfaceArg> for SwitchSurface {
+    fn from(value: SwitchSurfaceArg) -> Self {
+        match value {
+            SwitchSurfaceArg::Desktop => Self::Desktop,
+            SwitchSurfaceArg::Ide => Self::Ide,
+            SwitchSurfaceArg::Both => Self::Both,
+        }
+    }
+}
+
+#[derive(Debug, Args, PartialEq, Eq)]
+struct SwitchArgs {
+    /// Target account email (interactive selector when omitted)
+    target: Option<String>,
+    /// Target session surface to switch
+    #[arg(long, value_enum, default_value_t = SwitchSurfaceArg::Both)]
+    surface: SwitchSurfaceArg,
+    /// Swap credentials without restarting Antigravity
+    #[arg(long)]
+    no_restart: bool,
+}
+
+#[derive(Debug, Args, PartialEq, Eq)]
+#[command(override_help = DOCTOR_HELP)]
+struct DoctorArgs {
+    /// Automatically repair file permissions and refresh stale tokens
+    #[arg(long)]
+    fix: bool,
+    /// Skip remote Google OAuth token validation
+    #[arg(long)]
+    no_network: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+enum BalancerStrategyArg {
+    Watermark,
+    ExpiryFirst,
+    RoundRobin,
+    Reactive,
+}
+
+impl From<BalancerStrategyArg> for BalancerStrategy {
+    fn from(value: BalancerStrategyArg) -> Self {
+        match value {
+            BalancerStrategyArg::Watermark => Self::Watermark,
+            BalancerStrategyArg::ExpiryFirst => Self::ExpiryFirst,
+            BalancerStrategyArg::RoundRobin => Self::RoundRobin,
+            BalancerStrategyArg::Reactive => Self::Reactive,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+enum BalanceActionCmd {
+    Status,
+    On,
+    Enable,
+    Off,
+    Disable,
+    Strategy,
+    Rotate,
+    Config,
+}
+
+#[derive(Debug, Args, PartialEq)]
+#[command(override_help = BALANCE_HELP)]
+struct BalanceArgs {
+    /// Strategy mode
+    #[arg(long, value_enum)]
+    strategy: Option<BalancerStrategyArg>,
+    /// Watermark spread percentage
+    #[arg(long, value_parser = parse_finite_f64)]
+    spread: Option<f64>,
+    /// Round-robin interval in minutes
+    #[arg(long)]
+    interval: Option<u64>,
+    /// Expiry first window in hours
+    #[arg(long)]
+    expiry_window: Option<u64>,
+    /// Minimum quota percentage for candidate eligibility
+    #[arg(long, value_parser = parse_finite_f64)]
+    min_quota: Option<f64>,
+    /// Simulate rotation without executing switch
+    #[arg(long)]
+    dry_run: bool,
+    /// Bypass cooldown and balancer enabled check
+    #[arg(long)]
+    force: bool,
+    /// Action to perform
+    #[arg(value_enum)]
+    action: Option<BalanceActionCmd>,
+    /// Strategy name or value
+    extra_arg: Option<String>,
+}
+
+#[derive(Debug, Args, PartialEq, Eq)]
+#[command(override_help = PACE_HELP)]
+struct PaceArgs {
+    /// Bypass cache and refresh quotas directly
+    #[arg(long)]
+    force: bool,
+}
+
+fn parse_finite_f64(raw: &str) -> Result<f64, String> {
+    raw.parse::<f64>()
+        .ok()
+        .filter(|v| v.is_finite())
+        .ok_or_else(|| format!("invalid finite floating-point number: '{raw}'"))
+}
+
+fn run_async<F: Future<Output = ExitCode>>(fut: F) -> ExitCode {
+    let Ok(rt) = tokio::runtime::Runtime::new() else {
+        eprintln!("Failed to initialize async runtime.");
+        return ExitCode::FAILURE;
+    };
+    rt.block_on(fut)
+}
+
+async fn wait_for_shutdown_signal() {
+    #[cfg(unix)]
+    {
+        let mut sigterm =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok();
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = async {
+                if let Some(ref mut term) = sigterm {
+                    term.recv().await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
+fn format_shield_choice_error(raw_choice: &str) -> String {
+    let mut quoted = String::with_capacity(raw_choice.len() + 2);
+    quoted.push('\'');
+    for ch in raw_choice.chars() {
+        match ch {
+            '\'' => quoted.push_str("\\'"),
+            '\\' => quoted.push_str("\\\\"),
+            '\n' => quoted.push_str("\\n"),
+            '\r' => quoted.push_str("\\r"),
+            '\t' => quoted.push_str("\\t"),
+            '\u{00a0}' => quoted.push_str("\\xa0"),
+            '\u{200c}' => quoted.push_str("\\u200c"),
+            '\u{200d}' => quoted.push_str("\\u200d"),
+            other => quoted.push(other),
+        }
+    }
+    quoted.push('\'');
+
+    format!(
+        "{SHIELD_USAGE}\nagy-token shield: error: argument shield_action: invalid choice: {quoted} (choose from status, on, enable, off, disable, mode, allow, action, trigger)"
+    )
+}
+
+fn handle_clap_error(err: &clap::Error) -> ExitCode {
+    if err.kind() == ErrorKind::InvalidValue
+        && let Some(ContextValue::String(arg_name)) = err.get(ContextKind::InvalidArg)
+        && arg_name.contains("shield_action")
+        && let Some(ContextValue::String(raw_val)) = err.get(ContextKind::InvalidValue)
+    {
+        eprintln!("{}", format_shield_choice_error(raw_val));
+        return ExitCode::from(2);
+    }
+
+    let _ = err.print();
+    let code = u8::try_from(err.exit_code()).unwrap_or(2);
+    ExitCode::from(code)
+}
+
+fn account_display_priority(acc: &tracker_lib::storage::AccountProfile) -> u8 {
+    let is_desktop = acc.is_current_desktop_session.unwrap_or(false);
+    let is_ide = acc.is_current_ide_session.unwrap_or(false);
+    match (is_desktop, is_ide) {
+        (true, true) => 0,
+        (true, false) => 1,
+        (false, true) => 2,
+        (false, false) => 3,
+    }
+}
+
+fn run_list() -> ExitCode {
+    let storage = tracker_lib::storage::StorageManager::default();
+    let all_accs = match storage.list_accounts() {
+        Ok(accs) => accs,
+        Err(err) => {
+            eprintln!("Error reading accounts: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    if all_accs.is_empty() {
+        println!("No accounts registered yet.");
         return ExitCode::SUCCESS;
     }
 
-    if command == "check" {
-        let is_json = argv.iter().any(|a| a == "--json");
-        let is_force = argv.iter().any(|a| a == "--force");
+    let mut sorted = all_accs;
+    sorted.sort_by(|a, b| {
+        account_display_priority(a)
+            .cmp(&account_display_priority(b))
+            .then_with(|| a.email.to_lowercase().cmp(&b.email.to_lowercase()))
+    });
 
-        let Ok(rt) = tokio::runtime::Runtime::new() else {
-            return ExitCode::from(1);
+    println!("                       Registered Antigravity Accounts                        ");
+    println!(" Email                       Name            Tier            Active Surface   ");
+
+    for acc in sorted {
+        let email = &acc.email;
+        let name = acc.name.as_deref().unwrap_or("");
+        let tier = acc.tier.as_deref().unwrap_or("Standard");
+        let email_col = format!(" {email:<28}");
+        let name_col = format!("{name:<16}");
+
+        match (
+            acc.is_current_desktop_session == Some(true),
+            acc.is_current_ide_session == Some(true),
+        ) {
+            (true, true) => println!("{email_col}{name_col}{tier}   App + IDE    "),
+            (true, false) => println!("{email_col}{name_col}{tier}   Antigravity App  "),
+            (false, true) => println!("{email_col}{name_col}{tier}   Antigravity IDE  "),
+            (false, false) => println!("{email_col}{name_col}{tier}  Inactive / Stored "),
+        }
+    }
+
+    ExitCode::SUCCESS
+}
+
+fn parse_country_codes(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(|code| code.trim().to_uppercase())
+        .filter(|code| !code.is_empty())
+        .collect()
+}
+
+fn print_shield_status(cfg: &tracker_lib::shield::ShieldConfig) -> ExitCode {
+    run_async(async move {
+        let geo_info = tracker_lib::shield::get_ip_geo(false).await;
+        let (allowed, reason) = tracker_lib::shield::is_ip_allowed(&geo_info, cfg);
+
+        let status_str = if cfg.enabled {
+            "● ACTIVE (Protection ON)"
+        } else {
+            "○ DISABLED (Protection OFF)"
+        };
+        let mode_str = match cfg.mode {
+            ShieldMode::Whitelist => "Whitelist",
+            ShieldMode::Restricted => "Restricted",
+        };
+        let action_val = cfg.action.to_string();
+        let whitelist_str = cfg.allowed_countries.join(", ");
+        let relaunch_str = if cfg.auto_relaunch { "Yes" } else { "No" };
+        let current_ip = format!(
+            "{} {} ({}, {})",
+            geo_info.flag, geo_info.ip, geo_info.country_name, geo_info.country_code
+        );
+        let policy_str = if allowed {
+            "✓ COMPLIANT (Safe to run Antigravity)".to_string()
+        } else {
+            format!("⚠️ VIOLATION: {reason}")
         };
 
-        // 1. Sync active session
+        println!();
+        println!(
+            "╭──────────────────────────────────────────────────────────────────────────────╮"
+        );
+        println!(
+            "│         🛡️ Antigravity Geo-Shield & Killswitch Configuration                  │"
+        );
+        println!(
+            "│  Property                    Value                                           │"
+        );
+        println!("│  {:<27} {:<47} │", "Shield Status", status_str);
+        println!("│  {:<27} {:<47} │", "Mode", mode_str);
+        println!("│  {:<27} {:<47} │", "Enforcement Action", action_val);
+        println!("│  {:<27} {:<47} │", "Allowed Whitelist", whitelist_str);
+        println!(
+            "│  {:<27} {:<47} │",
+            "Auto-Relaunch on Reconnect", relaunch_str
+        );
+        println!("│  {:<27} {:<47} │", "Current Egress IP", current_ip);
+        println!("│  {:<27} {:<47} │", "Policy Check", policy_str);
+        println!(
+            "╰──────────────────────────────────────────────────────────────────────────────╯"
+        );
+        println!(
+            "Commands: `agy-token shield on|off`, `agy-token shield mode \nrestricted|whitelist`, `agy-token shield allow US,DE,GB`\n"
+        );
+        ExitCode::SUCCESS
+    })
+}
+
+fn run_shield(args: ShieldArgs) -> ExitCode {
+    let storage = tracker_lib::storage::StorageManager::default();
+    let config_dir = storage.config_dir();
+    let mut cfg = tracker_lib::shield::load_shield_config(config_dir);
+
+    let mut updated_via_flags = false;
+    if let Some(mode) = args.mode {
+        cfg.mode = mode.into();
+        updated_via_flags = true;
+    }
+    if let Some(allow_str) = args.allow.as_deref() {
+        let countries = parse_country_codes(allow_str);
+        if countries.is_empty() {
+            println!("Please specify country codes: `agy-token shield allow US,DE,GB`.");
+            return ExitCode::FAILURE;
+        }
+        cfg.allowed_countries = countries;
+        updated_via_flags = true;
+    }
+    if let Some(action) = args.action {
+        cfg.action = action.into();
+        updated_via_flags = true;
+    }
+    if updated_via_flags && let Err(err) = tracker_lib::shield::save_shield_config(config_dir, &cfg)
+    {
+        eprintln!("Failed to save shield config: {err}");
+        return ExitCode::FAILURE;
+    }
+
+    match args.shield_action {
+        Some(ShieldActionCmd::On | ShieldActionCmd::Enable) => {
+            let _ = tracker_lib::shield::enable_shield(config_dir);
+            println!("✓ IP Killswitch Shield ENABLED.");
+            println!(
+                "Antigravity processes will be automatically terminated if VPN drops or restricted IP is detected.\n"
+            );
+            ExitCode::SUCCESS
+        }
+        Some(ShieldActionCmd::Off | ShieldActionCmd::Disable) => {
+            let _ = tracker_lib::shield::disable_shield(config_dir);
+            println!("⚠️ IP Killswitch Shield DISABLED.\n");
+            ExitCode::SUCCESS
+        }
+        Some(ShieldActionCmd::Mode) => {
+            let target = args.extra_arg.as_deref().unwrap_or("");
+            let Ok(mode) = target.parse::<ShieldMode>() else {
+                println!(
+                    "Invalid mode. Specify: `agy-token shield mode restricted` or `agy-token shield mode whitelist`."
+                );
+                return ExitCode::FAILURE;
+            };
+            cfg.mode = mode;
+            let _ = tracker_lib::shield::save_shield_config(config_dir, &cfg);
+            println!("✓ Shield mode set to: {mode}\n");
+            ExitCode::SUCCESS
+        }
+        Some(ShieldActionCmd::Allow) => {
+            let list_str = args.extra_arg.as_deref().unwrap_or("");
+            let countries = parse_country_codes(list_str);
+            if countries.is_empty() {
+                println!("Please specify country codes: `agy-token shield allow US,DE,GB`.");
+                return ExitCode::FAILURE;
+            }
+            cfg.allowed_countries.clone_from(&countries);
+            let _ = tracker_lib::shield::save_shield_config(config_dir, &cfg);
+            println!(
+                "✓ Allowed countries whitelist updated to: {}\n",
+                countries.join(", ")
+            );
+            ExitCode::SUCCESS
+        }
+        Some(ShieldActionCmd::Action) => {
+            let act = args.extra_arg.as_deref().unwrap_or("");
+            let Ok(action) = act.parse::<ShieldAction>() else {
+                println!("Invalid action. Choose 'kill_process', 'kill_network', or 'both'.");
+                return ExitCode::FAILURE;
+            };
+            cfg.action = action;
+            let _ = tracker_lib::shield::save_shield_config(config_dir, &cfg);
+            println!("✓ Shield enforcement action set to: {action}\n");
+            ExitCode::SUCCESS
+        }
+        Some(ShieldActionCmd::Trigger) => {
+            println!("🚨 Manually triggering IP Killswitch emergency action...");
+            let (cnt, pids) = tracker_lib::shield::kill_antigravity_processes(true);
+            println!("✓ Terminated {cnt} Antigravity process(es) (PIDs: {pids:?}).\n");
+            ExitCode::SUCCESS
+        }
+        Some(ShieldActionCmd::Status) | None => {
+            if updated_via_flags && args.shield_action.is_none() {
+                println!(
+                    "✓ Shield configuration updated (Mode: {}, Action: {}, Whitelist: {}).",
+                    cfg.mode,
+                    cfg.action,
+                    cfg.allowed_countries.join(", ")
+                );
+                return ExitCode::SUCCESS;
+            }
+            print_shield_status(&cfg)
+        }
+    }
+}
+
+fn run_sync() -> ExitCode {
+    run_async(async {
         let storage = tracker_lib::storage::StorageManager::default();
-        let _ = rt.block_on(tracker_lib::auth::sync_from_antigravity(&storage));
+        match tracker_lib::auth::sync_from_antigravity(&storage).await {
+            Ok((Some(em), all_accs)) => {
+                println!("✓ Successfully synced active session: {em}");
+                println!("Total registered accounts: {}", all_accs.len());
+                for (acc_email, acc) in all_accs {
+                    let mut surfaces = Vec::new();
+                    if acc.is_current_desktop_session == Some(true) {
+                        surfaces.push("Antigravity App");
+                    }
+                    if acc.is_current_ide_session == Some(true) {
+                        surfaces.push("Antigravity IDE");
+                    }
+                    let surface_str = if surfaces.is_empty() {
+                        "(Inactive / Stored)".to_string()
+                    } else {
+                        format!("({})", surfaces.join(", "))
+                    };
+                    let tier = acc.tier.as_deref().unwrap_or("Standard");
+                    println!("  • {acc_email} [{tier}] {surface_str}");
+                }
+                ExitCode::SUCCESS
+            }
+            Ok((None, _)) => {
+                println!("No active Antigravity session found.");
+                ExitCode::SUCCESS
+            }
+            Err(err) => {
+                eprintln!("Error syncing from Antigravity: {err}");
+                ExitCode::FAILURE
+            }
+        }
+    })
+}
 
-        // 2. Fetch all quotas
-        let all_quotas = rt.block_on(tracker_lib::quota::fetch_all_accounts_quota(is_force));
+fn run_snapshot(args: SnapshotArgs) -> ExitCode {
+    run_async(async move {
+        let targets: Vec<String> = if let Some(target) = args.target {
+            vec![target.trim().to_lowercase()]
+        } else {
+            let storage = tracker_lib::storage::StorageManager::default();
+            match tracker_lib::auth::sync_from_antigravity(&storage).await {
+                Ok((active_email, all_accs)) => {
+                    let mut found = BTreeSet::new();
+                    for (email, acc) in all_accs {
+                        if acc.is_current_desktop_session == Some(true)
+                            || acc.is_current_ide_session == Some(true)
+                        {
+                            found.insert(email.to_lowercase());
+                        }
+                    }
+                    if let Some(em) = active_email {
+                        found.insert(em.to_lowercase());
+                    }
+                    found.into_iter().collect()
+                }
+                Err(err) => {
+                    eprintln!("Error syncing active Antigravity sessions: {err}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        };
 
-        // 3. Analyze lifecycle
+        if targets.is_empty() {
+            println!("No active Antigravity session found to snapshot.");
+            return ExitCode::FAILURE;
+        }
+
+        let mut any_saved = false;
+        for email in targets {
+            let res = tracker_lib::balancer::snapshot_account(&email).await;
+            println!(
+                "Snapshot for {email}: desktop={}, ide={}",
+                if res.desktop_saved { "saved" } else { "none" },
+                if res.ide_saved { "saved" } else { "none" }
+            );
+            if res.desktop_saved || res.ide_saved {
+                any_saved = true;
+            }
+        }
+
+        if any_saved {
+            ExitCode::SUCCESS
+        } else {
+            eprintln!("No session files or tokens could be snapshotted.");
+            ExitCode::FAILURE
+        }
+    })
+}
+
+fn run_remove(args: RemoveArgs) -> ExitCode {
+    match tracker_lib::storage::remove_account(&args.identifier) {
+        Ok(Some(removed)) => {
+            println!("✓ Removed account '{}' from tracking.", removed.email);
+            ExitCode::SUCCESS
+        }
+        Ok(None) => {
+            eprintln!("Account '{}' not found.", args.identifier);
+            ExitCode::FAILURE
+        }
+        Err(err) => {
+            eprintln!("Error removing account: {err}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_check(args: CheckArgs) -> ExitCode {
+    run_async(async move {
+        let storage = tracker_lib::storage::StorageManager::default();
+        let _ = tracker_lib::auth::sync_from_antigravity(&storage).await;
+        let all_quotas = tracker_lib::quota::fetch_all_accounts_quota(args.force).await;
+
         let mut analyzed = serde_json::Map::new();
         let mut is_any_exhausted = false;
         let now_dt = chrono::Utc::now();
@@ -600,7 +952,7 @@ fn run_pace_check(command: &str, _matches: &ArgMatches) -> ExitCode {
             }
         }
 
-        if is_json {
+        if args.json {
             #[allow(clippy::cast_precision_loss)]
             let now = chrono::Utc::now().timestamp_millis() as f64 / 1000.0;
             let output = serde_json::json!({
@@ -635,247 +987,152 @@ fn run_pace_check(command: &str, _matches: &ArgMatches) -> ExitCode {
             }
         }
 
-        return if is_any_exhausted {
-            ExitCode::from(1)
+        if is_any_exhausted {
+            ExitCode::FAILURE
         } else {
             ExitCode::SUCCESS
-        };
-    }
+        }
+    })
+}
 
-    if command == "pace" || command == "burn" {
-        let is_force = argv.iter().any(|a| a == "--force");
-        let Ok(rt) = tokio::runtime::Runtime::new() else {
-            return ExitCode::from(1);
-        };
-        let _ = rt.block_on(tracker_lib::quota::fetch_all_accounts_quota(is_force));
+fn run_pace(args: PaceArgs) -> ExitCode {
+    run_async(async move {
+        let all_quotas = tracker_lib::quota::fetch_all_accounts_quota(args.force).await;
+        let active_email = tracker_lib::daemon::active_account(&all_quotas).map(|(e, _)| e);
+        #[allow(clippy::cast_precision_loss)]
+        let now_epoch = chrono::Utc::now().timestamp_millis() as f64 / 1000.0;
+        let burnrates = tracker_lib::quota::calculate_pool_burnrates(
+            &all_quotas,
+            active_email,
+            None,
+            now_epoch,
+        );
+        for (email, velocity) in &burnrates.accounts {
+            let p = &velocity.primary;
+            println!(
+                "{email}: {:.1}% remaining | {:.2}%/hr | {} | ETA: {}",
+                p.current_quota_pct, p.velocity_pct_per_hour, p.pace_status, p.eta_human
+            );
+        }
         println!("Token burn rate calculation complete.");
-        return ExitCode::SUCCESS;
-    }
-
-    ExitCode::SUCCESS
+        ExitCode::SUCCESS
+    })
 }
 
-fn print_balance_help() {
-    print!(
-        r"usage: agy-token balance [-h]
-                         [--strategy {{watermark,expiry_first,round_robin,reactive}}]
-                         [--spread SPREAD] [--interval INTERVAL]
-                         [--expiry-window EXPIRY_WINDOW]
-                         [--min-quota MIN_QUOTA] [--dry-run] [--force]
-                         [{{status,on,enable,off,disable,strategy,rotate,config}}]
-                         [extra_arg]
+fn run_balance(args: BalanceArgs) -> ExitCode {
+    let mut cfg = tracker_lib::balancer::load_balancer_config();
 
-positional arguments:
-  {{status,on,enable,off,disable,strategy,rotate,config}}
-                        Action to perform (default: status)
-  extra_arg             Strategy name or value
-
-options:
-  -h, --help            show this help message and exit
-  --strategy {{watermark,expiry_first,round_robin,reactive}}
-                        Strategy mode
-  --spread SPREAD       Watermark spread percentage (e.g. 20.0)
-  --interval INTERVAL   Round-robin interval in minutes (e.g. 60)
-  --expiry-window EXPIRY_WINDOW
-                        Expiry first window in hours (e.g. 36)
-  --min-quota MIN_QUOTA
-                        Minimum quota percentage for candidate eligibility
-                        (e.g. 5.0)
-  --dry-run             Simulate rotation without executing switch
-  --force               Bypass cooldown and balancer enabled check
-"
-    );
-}
-
-fn run_balance(command: &str, _matches: &ArgMatches) -> ExitCode {
-    let argv: Vec<OsString> = std::env::args_os().collect();
-    if argv.iter().any(|a| a == "--help" || a == "-h") {
-        print_balance_help();
-        return ExitCode::SUCCESS;
+    if let Some(strat) = args.strategy {
+        cfg.strategy = strat.into();
+    }
+    if let Some(spread) = args.spread {
+        cfg.watermark_spread_pct = spread;
+    }
+    if let Some(interval) = args.interval {
+        cfg.round_robin_interval_minutes = interval;
+    }
+    if let Some(expiry_window) = args.expiry_window {
+        cfg.expiry_window_hours = expiry_window;
+    }
+    if let Some(min_quota) = args.min_quota {
+        cfg.min_quota_pct = min_quota;
     }
 
-    if command == "balance" {
-        let mut cfg = tracker_lib::balancer::load_balancer_config();
-
-        let mut new_strategy = None;
-        let mut i = 0;
-        while i < argv.len() {
-            if (argv[i] == "--strategy" || argv[i] == "strategy") && i + 1 < argv.len() {
-                if let Some(val) = argv[i + 1].to_str() {
-                    new_strategy = Some(val.parse::<tracker_lib::balancer::BalancerStrategy>());
-                }
-                break;
-            }
-            i += 1;
-        }
-
-        if let Some(strat_res) = new_strategy {
-            match strat_res {
-                Ok(strat) => {
-                    cfg.strategy = strat;
-                    let _ = tracker_lib::balancer::save_balancer_config(&cfg);
-                    println!("Auto-Balancer strategy set to: {strat}");
-                    return ExitCode::SUCCESS;
-                }
-                Err(err) => {
-                    eprintln!("{err}");
-                    return ExitCode::from(1);
-                }
-            }
-        }
-
-        if argv.iter().any(|a| a == "on" || a == "enable") {
+    let action = args.action.unwrap_or(BalanceActionCmd::Status);
+    match action {
+        BalanceActionCmd::On | BalanceActionCmd::Enable => {
             cfg.enabled = true;
             let _ = tracker_lib::balancer::save_balancer_config(&cfg);
             println!("Auto-Balancer ENABLED (Strategy: {})", cfg.strategy);
-            return ExitCode::SUCCESS;
+            ExitCode::SUCCESS
         }
-        if argv.iter().any(|a| a == "off" || a == "disable") {
+        BalanceActionCmd::Off | BalanceActionCmd::Disable => {
             cfg.enabled = false;
             let _ = tracker_lib::balancer::save_balancer_config(&cfg);
             println!("Auto-Balancer DISABLED");
-            return ExitCode::SUCCESS;
+            ExitCode::SUCCESS
+        }
+        BalanceActionCmd::Strategy => {
+            let strat = if let Some(s) = args.strategy {
+                s.into()
+            } else {
+                let raw = args.extra_arg.as_deref().unwrap_or("");
+                match raw.parse::<BalancerStrategy>() {
+                    Ok(parsed) => parsed,
+                    Err(err) => {
+                        eprintln!("{err}");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            };
+            cfg.strategy = strat;
+            let _ = tracker_lib::balancer::save_balancer_config(&cfg);
+            println!("Auto-Balancer strategy set to: {strat}");
+            ExitCode::SUCCESS
+        }
+        BalanceActionCmd::Config => {
+            if let Err(err) = tracker_lib::balancer::save_balancer_config(&cfg) {
+                eprintln!("Failed to save balancer config: {err}");
+                return ExitCode::FAILURE;
+            }
+            println!(
+                "Auto-Balancer configuration saved (Strategy: {}, Spread: {:.1}%, Interval: {}m, Expiry Window: {}h, Min Quota: {:.1}%).",
+                cfg.strategy,
+                cfg.watermark_spread_pct,
+                cfg.round_robin_interval_minutes,
+                cfg.expiry_window_hours,
+                cfg.min_quota_pct
+            );
+            ExitCode::SUCCESS
+        }
+        BalanceActionCmd::Rotate => run_async(async move {
+            let all_quotas = tracker_lib::quota::fetch_all_accounts_quota(args.force).await;
+            let decision = tracker_lib::balancer::evaluate_and_execute_balancer(
+                &all_quotas,
+                args.dry_run,
+                args.force,
+                args.strategy.map(Into::into),
+            )
+            .await;
+            println!("{}", decision.message);
+            if decision.error.is_some() {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            }
+        }),
+        BalanceActionCmd::Status => {
+            if args.strategy.is_some()
+                || args.spread.is_some()
+                || args.interval.is_some()
+                || args.expiry_window.is_some()
+                || args.min_quota.is_some()
+            {
+                let _ = tracker_lib::balancer::save_balancer_config(&cfg);
+            }
+            let state_str = if cfg.enabled { "ENABLED" } else { "DISABLED" };
+            println!(
+                "Auto-Balancer is currently {} (Strategy: {}, Spread: {:.1}%)",
+                state_str, cfg.strategy, cfg.watermark_spread_pct
+            );
+            ExitCode::SUCCESS
+        }
+    }
+}
+
+fn run_doctor(args: DoctorArgs) -> ExitCode {
+    println!("🩺 ANTIGRAVITY ACCOUNT HEALTH & TOKEN DOCTOR\n");
+    run_async(async move {
+        if args.fix {
+            let storage = tracker_lib::storage::StorageManager::default();
+            let _ = storage.ensure_config_dir();
+            let _ = tracker_lib::auth::sync_from_antigravity(&storage).await;
+        }
+        if args.no_network {
+            println!("ℹ Note: --no-network requested; running local diagnostic checks.\n");
         }
 
-        let state_str = if cfg.enabled { "ENABLED" } else { "DISABLED" };
-        println!(
-            "Auto-Balancer is currently {} (Strategy: {}, Spread: {:.1}%)",
-            state_str, cfg.strategy, cfg.watermark_spread_pct
-        );
-        return ExitCode::SUCCESS;
-    }
-
-    ExitCode::SUCCESS
-}
-
-fn print_doctor_help() {
-    print!(
-        r"usage: agy-token doctor [-h] [--fix] [--no-network]
-
-options:
-  -h, --help    show this help message and exit
-  --fix         Automatically repair file permissions, refresh stale tokens,
-                and restart services
-  --no-network  Skip remote Google OAuth token validation
-"
-    );
-}
-
-fn print_daemon_help() {
-    print!(
-        r"usage: agy-token daemon [-h] [--interval INTERVAL] [--auto-switch]
-                        [--threshold THRESHOLD] [--cooldown COOLDOWN]
-                        [--no-restart] [--tray]
-
-options:
-  -h, --help            show this help message and exit
-  --interval INTERVAL   Polling interval in seconds (default: 300)
-  --auto-switch         Automatically switch session when active account quota
-                        runs out
-  --threshold THRESHOLD
-                        Quota percentage threshold to trigger auto-failover
-                        (default: 1.0%)
-  --cooldown COOLDOWN   Minimum seconds between auto-failovers (default: 120)
-  --no-restart          Swap session without restarting Antigravity
-  --tray                Launch top-bar system tray indicator alongside daemon
-"
-    );
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct DaemonCliArgs {
-    interval_secs: u64,
-    auto_switch: bool,
-    threshold: f64,
-    cooldown_secs: f64,
-    restart: bool,
-    launch_tray: bool,
-}
-
-fn parse_finite_f64(raw: &str) -> Option<f64> {
-    raw.parse::<f64>().ok().filter(|v| v.is_finite())
-}
-
-fn parse_daemon_args(argv: &[OsString]) -> DaemonCliArgs {
-    let mut parsed = DaemonCliArgs {
-        interval_secs: 60,
-        auto_switch: false,
-        threshold: 1.0,
-        cooldown_secs: 120.0,
-        restart: true,
-        launch_tray: false,
-    };
-    let mut i = 0;
-    while i < argv.len() {
-        let Some(arg_str) = argv[i].to_str() else {
-            i += 1;
-            continue;
-        };
-        let next_str = argv.get(i + 1).and_then(|s| s.to_str());
-        match arg_str {
-            "--interval" => {
-                if let Some(val) = next_str.and_then(|s| s.parse::<u64>().ok()) {
-                    parsed.interval_secs = val;
-                    i += 1;
-                }
-            }
-            "--threshold" => {
-                if let Some(val) = next_str.and_then(parse_finite_f64) {
-                    parsed.threshold = val;
-                    i += 1;
-                }
-            }
-            "--cooldown" => {
-                if let Some(val) = next_str.and_then(parse_finite_f64) {
-                    parsed.cooldown_secs = val;
-                    i += 1;
-                }
-            }
-            "--auto-switch" => parsed.auto_switch = true,
-            "--no-restart" => parsed.restart = false,
-            "--tray" => parsed.launch_tray = true,
-            _ => {
-                if let Some(val) = arg_str
-                    .strip_prefix("--interval=")
-                    .and_then(|s| s.parse::<u64>().ok())
-                {
-                    parsed.interval_secs = val;
-                } else if let Some(val) = arg_str
-                    .strip_prefix("--threshold=")
-                    .and_then(parse_finite_f64)
-                {
-                    parsed.threshold = val;
-                } else if let Some(val) = arg_str
-                    .strip_prefix("--cooldown=")
-                    .and_then(parse_finite_f64)
-                {
-                    parsed.cooldown_secs = val;
-                }
-            }
-        }
-        i += 1;
-    }
-    parsed
-}
-
-fn run_daemon_doctor(command: &str, _matches: &ArgMatches) -> ExitCode {
-    let argv: Vec<OsString> = std::env::args_os().collect();
-    if argv.iter().any(|a| a == "--help" || a == "-h") {
-        if command == "doctor" || argv.iter().any(|a| a == "doctor") {
-            print_doctor_help();
-        } else {
-            print_daemon_help();
-        }
-        return ExitCode::SUCCESS;
-    }
-
-    if command == "doctor" {
-        println!("🩺 ANTIGRAVITY ACCOUNT HEALTH & TOKEN DOCTOR\n");
-        let Ok(rt) = tokio::runtime::Runtime::new() else {
-            return ExitCode::from(1);
-        };
-
-        let report = rt.block_on(tracker_lib::daemon::run_doctor_suite());
+        let report = tracker_lib::daemon::run_doctor_suite().await;
         for item in &report.items {
             let icon = match item.status {
                 tracker_lib::daemon::DiagnosticStatus::Pass => "✓",
@@ -894,220 +1151,159 @@ fn run_daemon_doctor(command: &str, _matches: &ArgMatches) -> ExitCode {
                     | tracker_lib::daemon::DiagnosticStatus::Info
             )
         });
-        return if all_passed {
+        if all_passed {
             ExitCode::SUCCESS
         } else {
-            ExitCode::from(1)
-        };
-    }
+            ExitCode::FAILURE
+        }
+    })
+}
 
-    if command == "daemon" {
-        let parsed = parse_daemon_args(&argv);
-
-        println!("Antigravity Token Tracker Daemon started.");
-        let Ok(rt) = tokio::runtime::Runtime::new() else {
-            return ExitCode::from(1);
-        };
-        let ok = rt.block_on(async {
-            let (tx, rx) = tokio::sync::watch::channel(false);
-            let signal_tx = tx.clone();
-            tokio::spawn(async move {
-                #[cfg(unix)]
-                {
-                    let mut sigterm =
-                        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                            .ok();
-                    tokio::select! {
-                        _ = tokio::signal::ctrl_c() => {}
-                        _ = async {
-                            if let Some(ref mut term) = sigterm {
-                                term.recv().await;
-                            } else {
-                                std::future::pending::<()>().await;
-                            }
-                        } => {}
-                    }
-                }
-                #[cfg(not(unix))]
-                {
-                    let _ = tokio::signal::ctrl_c().await;
-                }
-                let _ = signal_tx.send(true);
-            });
-
-            let daemon_options = tracker_lib::daemon::DaemonRunOptions {
-                interval_secs: parsed.interval_secs,
-                auto_switch: parsed.auto_switch,
-                threshold: parsed.threshold,
-                cooldown_seconds: parsed.cooldown_secs,
-                restart: if parsed.restart {
-                    tracker_lib::daemon::FailoverRestart::Restart
-                } else {
-                    tracker_lib::daemon::FailoverRestart::NoRestart
-                },
-            };
-
-            if parsed.launch_tray {
-                let daemon_tx = tx.clone();
-                let daemon_rx = rx.clone();
-                let tray_tx = tx;
-                let tray_rx = rx;
-                let (daemon_res, tray_res) = tokio::join!(
-                    async move {
-                        let res = tracker_lib::daemon::run_daemon_with_options(
-                            daemon_options,
-                            Some(daemon_rx),
-                        )
-                        .await;
-                        let _ = daemon_tx.send(true);
-                        res
-                    },
-                    async move {
-                        let res =
-                            tracker_lib::tray::run_tray(parsed.interval_secs, None, Some(tray_rx))
-                                .await;
-                        let _ = tray_tx.send(true);
-                        res
-                    }
-                );
-                if let Err(err) = &daemon_res {
-                    eprintln!("[Daemon] Error: {err}");
-                }
-                if let Err(err) = &tray_res {
-                    eprintln!("[Tray] Error: {err}");
-                }
-                daemon_res.is_ok() && tray_res.is_ok()
-            } else {
-                let res =
-                    tracker_lib::daemon::run_daemon_with_options(daemon_options, Some(rx)).await;
-                let _ = tx.send(true);
-                if let Err(err) = &res {
-                    eprintln!("[Daemon] Error: {err}");
-                }
-                res.is_ok()
-            }
+fn run_daemon(args: DaemonArgs) -> ExitCode {
+    println!("Antigravity Token Tracker Daemon started.");
+    run_async(async move {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        let signal_tx = tx.clone();
+        tokio::spawn(async move {
+            wait_for_shutdown_signal().await;
+            let _ = signal_tx.send(true);
         });
-        return if ok {
+
+        let daemon_options = DaemonRunOptions {
+            interval_secs: args.interval,
+            auto_switch: args.auto_switch,
+            threshold: args.threshold,
+            cooldown_seconds: args.cooldown,
+            restart: if args.no_restart {
+                FailoverRestart::NoRestart
+            } else {
+                FailoverRestart::Restart
+            },
+        };
+
+        let ok = if args.tray {
+            let (snap_tx, snap_rx) = tokio::sync::watch::channel(None);
+            let daemon_tx = tx.clone();
+            let daemon_rx = rx.clone();
+            let tray_tx = tx;
+            let tray_rx = rx;
+            let (daemon_res, tray_res) = tokio::join!(
+                async move {
+                    let res = tracker_lib::daemon::run_daemon_with_snapshot(
+                        daemon_options,
+                        Some(daemon_rx),
+                        Some(snap_tx),
+                    )
+                    .await;
+                    let _ = daemon_tx.send(true);
+                    res
+                },
+                async move {
+                    let res = tracker_lib::tray::run_tray_with_feed(
+                        args.interval,
+                        None,
+                        Some(tray_rx),
+                        Some(snap_rx),
+                    )
+                    .await;
+                    let _ = tray_tx.send(true);
+                    res
+                }
+            );
+            if let Err(err) = &daemon_res {
+                eprintln!("[Daemon] Error: {err}");
+            }
+            if let Err(err) = &tray_res {
+                eprintln!("[Tray] Error: {err}");
+            }
+            daemon_res.is_ok() && tray_res.is_ok()
+        } else {
+            let res =
+                tracker_lib::daemon::run_daemon_with_snapshot(daemon_options, Some(rx), None).await;
+            let _ = tx.send(true);
+            if let Err(err) = &res {
+                eprintln!("[Daemon] Error: {err}");
+            }
+            res.is_ok()
+        };
+
+        if ok {
             ExitCode::SUCCESS
         } else {
-            ExitCode::from(1)
-        };
-    }
-
-    ExitCode::SUCCESS
-}
-
-fn print_web_help() {
-    print!(
-        r"usage: agy-token web [-h] [--port PORT] [--bg]
-
-options:
-  -h, --help          show this help message and exit
-  --port PORT         Port to listen on (default: 8765)
-  --bg, --background  Run dashboard in background daemon thread instead of
-                      blocking
-"
-    );
-}
-
-fn run_web(command: &str, _matches: &ArgMatches) -> ExitCode {
-    let argv: Vec<OsString> = std::env::args_os().collect();
-    if argv.iter().any(|a| a == "--help" || a == "-h") {
-        print_web_help();
-        return ExitCode::SUCCESS;
-    }
-
-    if command == "web" {
-        let mut port = 8765u16;
-        let mut i = 0;
-        while i < argv.len() {
-            if argv[i] == "--port" && i + 1 < argv.len() {
-                if let Some(val) = argv[i + 1].to_str().and_then(|s| s.parse::<u16>().ok()) {
-                    port = val;
-                }
-                break;
-            }
-            i += 1;
+            ExitCode::FAILURE
         }
+    })
+}
 
-        println!("Starting Antigravity Web Dashboard on http://localhost:{port} ...");
-        let Ok(rt) = tokio::runtime::Runtime::new() else {
-            return ExitCode::from(1);
-        };
-
-        if let Err(e) = rt.block_on(tracker_lib::web::start_web_server(port)) {
-            eprintln!("Error running web server: {e}");
-            return ExitCode::from(1);
+fn spawn_detached_web(port: u16) -> ExitCode {
+    let exe = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(err) => {
+            eprintln!("Failed to resolve executable path: {err}");
+            return ExitCode::FAILURE;
         }
+    };
 
-        return ExitCode::SUCCESS;
+    let mut cmd = std::process::Command::new(exe);
+    cmd.args(["web", "--port", &port.to_string()])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
     }
 
-    ExitCode::SUCCESS
-}
-
-fn print_status_help() {
-    print!(
-        r"usage: agy-token status [-h] [--models] [--force]
-
-options:
-  -h, --help  show this help message and exit
-  --models    Display all individual model quotas
-  --force     Bypass local cache and query Google directly
-"
-    );
-}
-
-fn print_ip_help() {
-    print!(
-        r"usage: agy-token ip [-h] [--refresh] [--json]
-
-options:
-  -h, --help  show this help message and exit
-  --refresh   Bypass 60s cache and re-query live IP service
-  --json      Output machine-readable JSON
-"
-    );
-}
-
-fn run_status_ip(command: &str, _matches: &ArgMatches) -> ExitCode {
-    let argv: Vec<OsString> = std::env::args_os().collect();
-    if argv.iter().any(|a| a == "--help" || a == "-h") {
-        if command == "ip" || argv.iter().any(|a| a == "ip") {
-            print_ip_help();
-        } else {
-            print_status_help();
+    match cmd.spawn() {
+        Ok(child) => {
+            println!(
+                "Antigravity Web Dashboard started in background (PID: {}, http://localhost:{port}).",
+                child.id()
+            );
+            ExitCode::SUCCESS
         }
-        return ExitCode::SUCCESS;
+        Err(err) => {
+            eprintln!("Error starting background web dashboard: {err}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_web(args: WebArgs) -> ExitCode {
+    if args.bg {
+        return spawn_detached_web(args.port);
     }
 
-    if command == "status" {
-        let is_force = argv.iter().any(|a| a == "--force");
+    println!(
+        "Starting Antigravity Web Dashboard on http://localhost:{} ...",
+        args.port
+    );
+    run_async(async move {
+        if let Err(err) = tracker_lib::web::start_web_server(args.port).await {
+            eprintln!("Error running web server: {err}");
+            return ExitCode::FAILURE;
+        }
+        ExitCode::SUCCESS
+    })
+}
 
-        let Ok(rt) = tokio::runtime::Runtime::new() else {
-            return ExitCode::from(1);
-        };
-
+fn run_status(args: StatusArgs) -> ExitCode {
+    run_async(async move {
         let storage = tracker_lib::storage::StorageManager::default();
-        // 1. Sync active IDE session
-        let _ = rt.block_on(tracker_lib::auth::sync_from_antigravity(&storage));
-
-        // 2. Fetch all quotas
-        let all_quotas = rt.block_on(tracker_lib::quota::fetch_all_accounts_quota(is_force));
+        let _ = tracker_lib::auth::sync_from_antigravity(&storage).await;
+        let all_quotas = tracker_lib::quota::fetch_all_accounts_quota(args.force).await;
 
         if all_quotas.is_empty() {
             println!("No accounts found. Run `agy-token sync` to import from Antigravity IDE.");
             return ExitCode::SUCCESS;
         }
 
-        // 3. Geolocation
-        let geo_info = rt.block_on(tracker_lib::shield::get_ip_geo(is_force));
-
-        // 4. Configs
+        let geo_info = tracker_lib::shield::get_ip_geo(args.force).await;
         let shield_cfg = tracker_lib::shield::load_shield_config(storage.config_dir());
         let bal_cfg = tracker_lib::balancer::load_balancer_config();
 
-        // 5. Render dashboard
         let dashboard = tracker_lib::cli::render_status_dashboard(
             &all_quotas,
             &geo_info,
@@ -1116,19 +1312,64 @@ fn run_status_ip(command: &str, _matches: &ArgMatches) -> ExitCode {
         );
         println!("{dashboard}");
 
-        return ExitCode::SUCCESS;
-    }
+        if args.models {
+            let mut emails: Vec<&String> = all_quotas.keys().collect();
+            emails.sort();
+            for email in emails {
+                let q = &all_quotas[email];
+                if q.models.is_empty() {
+                    continue;
+                }
+                println!("Models for {email}:");
+                for model in &q.models {
+                    let pct = model
+                        .remaining_percent
+                        .map_or_else(|| "N/A".to_string(), |p| format!("{p:.1}%"));
+                    let reset = model.reset_time.as_deref().unwrap_or("-");
+                    println!("  • {:<32} {:>7} (reset: {reset})", model.model_id, pct);
+                }
+            }
+        }
 
-    if command == "ip" {
-        let is_refresh = argv.iter().any(|a| a == "--refresh");
-        let is_json = argv.iter().any(|a| a == "--json");
+        ExitCode::SUCCESS
+    })
+}
 
-        let Ok(rt) = tokio::runtime::Runtime::new() else {
-            return ExitCode::from(1);
-        };
+fn run_watch(args: WatchArgs) -> ExitCode {
+    run_async(async move {
+        let storage = tracker_lib::storage::StorageManager::default();
+        let mut interval =
+            tokio::time::interval(tokio::time::Duration::from_secs(args.interval.max(1)));
+        let shutdown = wait_for_shutdown_signal();
+        tokio::pin!(shutdown);
 
-        let geo = rt.block_on(tracker_lib::shield::get_ip_geo(is_refresh));
-        if is_json {
+        loop {
+            tokio::select! {
+                () = &mut shutdown => break,
+                _ = interval.tick() => {
+                    let _ = tracker_lib::auth::sync_from_antigravity(&storage).await;
+                    let all_quotas = tracker_lib::quota::fetch_all_accounts_quota(args.force).await;
+                    let geo_info = tracker_lib::shield::get_ip_geo(args.force).await;
+                    let shield_cfg = tracker_lib::shield::load_shield_config(storage.config_dir());
+                    let bal_cfg = tracker_lib::balancer::load_balancer_config();
+                    let dashboard = tracker_lib::cli::render_status_dashboard(
+                        &all_quotas,
+                        &geo_info,
+                        &shield_cfg,
+                        &bal_cfg,
+                    );
+                    print!("\x1B[2J\x1B[H{dashboard}");
+                }
+            }
+        }
+        ExitCode::SUCCESS
+    })
+}
+
+fn run_ip(args: IpArgs) -> ExitCode {
+    run_async(async move {
+        let geo = tracker_lib::shield::get_ip_geo(args.refresh).await;
+        if args.json {
             println!("{}", serde_json::to_string_pretty(&geo).unwrap_or_default());
         } else {
             println!("IP: {} {}", geo.flag, geo.ip);
@@ -1141,79 +1382,123 @@ fn run_status_ip(command: &str, _matches: &ArgMatches) -> ExitCode {
             };
             println!("Status: {safe_badge}");
         }
-        return ExitCode::SUCCESS;
-    }
-
-    ExitCode::SUCCESS
+        ExitCode::SUCCESS
+    })
 }
 
-fn print_tray_help() {
-    print!(
-        r"usage: agy-token tray [-h] [--interval INTERVAL]
-
-options:
-  -h, --help           show this help message and exit
-  --interval INTERVAL  Polling interval in seconds (default: 60)
-"
+fn run_tray(args: TrayArgs) -> ExitCode {
+    println!(
+        "Antigravity Top-Bar Tray Applet started. (Updating every {}s)",
+        args.interval
     );
+    println!("Look for the lightning icon in your Ubuntu / Linux top bar. Press Ctrl+C to exit.");
+
+    run_async(async move {
+        if let Err(err) = tracker_lib::tray::run_tray(args.interval, None, None).await {
+            eprintln!("[Tray] Error: {err}");
+            return ExitCode::FAILURE;
+        }
+        ExitCode::SUCCESS
+    })
 }
 
-fn run_tray(command: &str, _matches: &ArgMatches) -> ExitCode {
-    let argv: Vec<OsString> = std::env::args_os().collect();
-    if argv.iter().any(|a| a == "--help" || a == "-h") {
-        print_tray_help();
-        return ExitCode::SUCCESS;
-    }
-
-    if command == "tray" {
-        let mut interval = 60u64;
-        let mut i = 0;
-        while i < argv.len() {
-            if argv[i] == "--interval" && i + 1 < argv.len() {
-                if let Some(val) = argv[i + 1].to_str().and_then(|s| s.parse::<u64>().ok()) {
-                    interval = val;
+fn run_switch(args: SwitchArgs) -> ExitCode {
+    run_async(async move {
+        if let Some(target) = args.target {
+            match tracker_lib::balancer::switch_to_account(
+                &target,
+                !args.no_restart,
+                args.surface.into(),
+            )
+            .await
+            {
+                Ok(outcome) => {
+                    println!("✓ {outcome}");
+                    ExitCode::SUCCESS
                 }
-                break;
+                Err(err) => {
+                    eprintln!("Error switching account: {err}");
+                    ExitCode::FAILURE
+                }
             }
-            i += 1;
+        } else {
+            let accounts = match tracker_lib::storage::list_accounts() {
+                Ok(accs) => accs,
+                Err(err) => {
+                    eprintln!("Error reading accounts: {err}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            match tracker_lib::cli::run_interactive_switcher(&accounts).await {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("{err}");
+                    ExitCode::FAILURE
+                }
+            }
         }
+    })
+}
 
-        println!("Antigravity Top-Bar Tray Applet started. (Updating every {interval}s)");
-        println!(
-            "Look for the lightning icon in your Ubuntu / Linux top bar. Press Ctrl+C to exit."
-        );
-
-        let Ok(rt) = tokio::runtime::Runtime::new() else {
-            return ExitCode::from(1);
-        };
-
-        if let Err(e) = rt.block_on(tracker_lib::tray::run_tray(interval, None, None)) {
-            eprintln!("[Tray] Error: {e}");
-            return ExitCode::from(1);
+fn run_test_notify() -> ExitCode {
+    run_async(async {
+        let actions = [
+            ("switch_best", "Switch to Best Account"),
+            ("open_dashboard", "Open Dashboard"),
+        ];
+        match tracker_lib::daemon::send_desktop_notification_with_actions(
+            "Antigravity Token Tracker",
+            "Test notification: 1-click failover actions ready.",
+            "normal",
+            &actions,
+        )
+        .await
+        {
+            Some(notification_id) => {
+                println!("✓ Desktop notification sent (id: {notification_id}).");
+                ExitCode::SUCCESS
+            }
+            None => {
+                eprintln!("Failed to send interactive desktop notification via D-Bus.");
+                ExitCode::FAILURE
+            }
         }
+    })
+}
 
-        return ExitCode::SUCCESS;
+fn dispatch(command: Commands) -> ExitCode {
+    match command {
+        Commands::Status(args) => run_status(args),
+        Commands::Shield(args) => run_shield(args),
+        Commands::Ip(args) => run_ip(args),
+        Commands::Watch(args) => run_watch(args),
+        Commands::Check(args) => run_check(args),
+        Commands::Sync => run_sync(),
+        Commands::Snapshot(args) => run_snapshot(args),
+        Commands::List(_) => run_list(),
+        Commands::Remove(args) => run_remove(args),
+        Commands::Daemon(args) => run_daemon(args),
+        Commands::Web(args) => run_web(args),
+        Commands::Tray(args) => run_tray(args),
+        Commands::Switch(args) => run_switch(args),
+        Commands::Doctor(args) => run_doctor(args),
+        Commands::Balance(args) => run_balance(args),
+        Commands::Pace(args) => run_pace(args),
+        Commands::TestNotify => run_test_notify(),
     }
-
-    ExitCode::SUCCESS
 }
 
 fn main() -> ExitCode {
-    report_fallbacks();
-    let argv: Vec<OsString> = std::env::args_os().collect();
-
-    if argv.len() <= 1 || (argv.len() == 2 && (argv[1] == "--help" || argv[1] == "-h")) {
-        print_root_help();
-        return ExitCode::SUCCESS;
+    match Cli::try_parse() {
+        Ok(cli) => match cli.command {
+            Some(cmd) => dispatch(cmd),
+            None => {
+                let _ = Cli::command().print_help();
+                ExitCode::SUCCESS
+            }
+        },
+        Err(err) => handle_clap_error(&err),
     }
-
-    if let Ok(matches) = cli_command().try_get_matches_from(&argv) {
-        let (command, sub) = matches.subcommand().unwrap_or((ROOT, &matches));
-        if let Some(code) = dispatch(command, sub) {
-            return code;
-        }
-    }
-    ExitCode::from(1)
 }
 
 #[cfg(test)]
@@ -1221,74 +1506,221 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_daemon_args_reads_all_space_separated_flags() {
-        let args = vec![
-            OsString::from("agy-token"),
-            OsString::from("daemon"),
-            OsString::from("--interval"),
-            OsString::from("300"),
-            OsString::from("--auto-switch"),
-            OsString::from("--threshold"),
-            OsString::from("5.5"),
-            OsString::from("--cooldown"),
-            OsString::from("45.0"),
-            OsString::from("--no-restart"),
-            OsString::from("--tray"),
-        ];
-        let parsed = parse_daemon_args(&args);
-        assert_eq!(parsed.interval_secs, 300);
-        assert!(parsed.auto_switch);
-        assert!((parsed.threshold - 5.5).abs() < f64::EPSILON);
-        assert!((parsed.cooldown_secs - 45.0).abs() < f64::EPSILON);
-        assert!(!parsed.restart);
-        assert!(parsed.launch_tray);
+    fn test_parse_daemon_with_tray_and_failover_flags() {
+        let cli = Cli::try_parse_from([
+            "agy-token",
+            "daemon",
+            "--tray",
+            "--threshold",
+            "2.5",
+            "--cooldown",
+            "60",
+            "--no-restart",
+        ])
+        .expect("daemon args should parse");
+
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Daemon(DaemonArgs {
+                interval: 60,
+                auto_switch: false,
+                threshold,
+                cooldown,
+                no_restart: true,
+                tray: true,
+            })) if (threshold - 2.5).abs() < f64::EPSILON && (cooldown - 60.0).abs() < f64::EPSILON
+        ));
     }
 
     #[test]
-    fn test_parse_daemon_args_reads_equals_syntax() {
-        let args = vec![
-            OsString::from("agy-token"),
-            OsString::from("daemon"),
-            OsString::from("--interval=180"),
-            OsString::from("--threshold=2.25"),
-            OsString::from("--cooldown=90.5"),
-            OsString::from("--auto-switch"),
-            OsString::from("--no-restart"),
-            OsString::from("--tray"),
-        ];
-        let parsed = parse_daemon_args(&args);
-        assert_eq!(parsed.interval_secs, 180);
-        assert!(parsed.auto_switch);
-        assert!((parsed.threshold - 2.25).abs() < f64::EPSILON);
-        assert!((parsed.cooldown_secs - 90.5).abs() < f64::EPSILON);
-        assert!(!parsed.restart);
-        assert!(parsed.launch_tray);
+    fn test_parse_daemon_equals_and_defaults() {
+        let defaults = Cli::try_parse_from(["agy-token", "daemon"]).expect("daemon defaults");
+        assert!(matches!(
+            defaults.command,
+            Some(Commands::Daemon(DaemonArgs {
+                interval: 60,
+                auto_switch: false,
+                threshold,
+                cooldown,
+                no_restart: false,
+                tray: false,
+            })) if (threshold - 1.0).abs() < f64::EPSILON && (cooldown - 120.0).abs() < f64::EPSILON
+        ));
+
+        let eq = Cli::try_parse_from([
+            "agy-token",
+            "daemon",
+            "--interval=180",
+            "--threshold=2.25",
+            "--cooldown=90.5",
+            "--auto-switch",
+            "--no-restart",
+            "--tray",
+        ])
+        .expect("daemon equals syntax");
+        assert!(matches!(
+            eq.command,
+            Some(Commands::Daemon(DaemonArgs {
+                interval: 180,
+                auto_switch: true,
+                threshold,
+                cooldown,
+                no_restart: true,
+                tray: true,
+            })) if (threshold - 2.25).abs() < f64::EPSILON && (cooldown - 90.5).abs() < f64::EPSILON
+        ));
     }
 
     #[test]
-    fn test_parse_daemon_args_defaults_and_ignores_invalid_values() {
-        let defaults = parse_daemon_args(&[OsString::from("agy-token"), OsString::from("daemon")]);
-        assert_eq!(defaults.interval_secs, 60);
-        assert!(!defaults.auto_switch);
-        assert!((defaults.threshold - 1.0).abs() < f64::EPSILON);
-        assert!((defaults.cooldown_secs - 120.0).abs() < f64::EPSILON);
-        assert!(defaults.restart);
-        assert!(!defaults.launch_tray);
+    fn test_parse_tray_interval_equals_and_space() {
+        let eq = Cli::try_parse_from(["agy-token", "tray", "--interval=30"])
+            .expect("tray --interval=30 should parse");
+        assert_eq!(eq.command, Some(Commands::Tray(TrayArgs { interval: 30 })));
 
-        let invalid = parse_daemon_args(&[
-            OsString::from("agy-token"),
-            OsString::from("daemon"),
-            OsString::from("--interval"),
-            OsString::from("not_a_number"),
-            OsString::from("--threshold"),
-            OsString::from("NaN"),
-            OsString::from("--cooldown=inf"),
-            OsString::from("--tray"),
-        ]);
-        assert_eq!(invalid.interval_secs, 60);
-        assert!((invalid.threshold - 1.0).abs() < f64::EPSILON);
-        assert!((invalid.cooldown_secs - 120.0).abs() < f64::EPSILON);
-        assert!(invalid.restart);
-        assert!(invalid.launch_tray);
+        let sp = Cli::try_parse_from(["agy-token", "tray", "--interval", "45"])
+            .expect("tray --interval 45 should parse");
+        assert_eq!(sp.command, Some(Commands::Tray(TrayArgs { interval: 45 })));
+    }
+
+    #[test]
+    fn test_parse_web_port_and_background_aliases() {
+        let bg = Cli::try_parse_from(["agy-token", "web", "--port", "9000", "--bg"])
+            .expect("web --port 9000 --bg should parse");
+        assert_eq!(
+            bg.command,
+            Some(Commands::Web(WebArgs {
+                port: 9000,
+                bg: true
+            }))
+        );
+
+        let background = Cli::try_parse_from(["agy-token", "web", "--background"])
+            .expect("web --background should parse");
+        assert_eq!(
+            background.command,
+            Some(Commands::Web(WebArgs {
+                port: 8765,
+                bg: true
+            }))
+        );
+    }
+
+    #[test]
+    fn test_parse_test_notify_and_aliases() {
+        for cmd in ["test-notify", "notify-test", "test-toast"] {
+            let parsed = Cli::try_parse_from(["agy-token", cmd]).expect("test-notify alias");
+            assert!(matches!(parsed.command, Some(Commands::TestNotify)));
+        }
+    }
+
+    #[test]
+    fn test_parse_switch_subcommand() {
+        let interactive =
+            Cli::try_parse_from(["agy-token", "switch"]).expect("switch without target");
+        assert_eq!(
+            interactive.command,
+            Some(Commands::Switch(SwitchArgs {
+                target: None,
+                surface: SwitchSurfaceArg::Both,
+                no_restart: false,
+            }))
+        );
+
+        let targeted = Cli::try_parse_from([
+            "agy-token",
+            "switch",
+            "user@example.com",
+            "--surface",
+            "ide",
+            "--no-restart",
+        ])
+        .expect("switch with target and flags");
+        assert_eq!(
+            targeted.command,
+            Some(Commands::Switch(SwitchArgs {
+                target: Some("user@example.com".to_string()),
+                surface: SwitchSurfaceArg::Ide,
+                no_restart: true,
+            }))
+        );
+
+        let desktop = Cli::try_parse_from(["agy-token", "switch", "1", "--surface=desktop"])
+            .expect("switch desktop");
+        assert_eq!(
+            desktop.command,
+            Some(Commands::Switch(SwitchArgs {
+                target: Some("1".to_string()),
+                surface: SwitchSurfaceArg::Desktop,
+                no_restart: false,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_parse_remove_and_snapshot_subcommands() {
+        let rem = Cli::try_parse_from(["agy-token", "remove", "user@example.com"])
+            .expect("remove with identifier");
+        assert_eq!(
+            rem.command,
+            Some(Commands::Remove(RemoveArgs {
+                identifier: "user@example.com".to_string()
+            }))
+        );
+
+        assert!(
+            Cli::try_parse_from(["agy-token", "remove"]).is_err(),
+            "remove without identifier must fail"
+        );
+
+        let snap = Cli::try_parse_from(["agy-token", "snapshot"]).expect("snapshot without target");
+        assert_eq!(
+            snap.command,
+            Some(Commands::Snapshot(SnapshotArgs { target: None }))
+        );
+
+        let save = Cli::try_parse_from(["agy-token", "save", "user@example.com"])
+            .expect("save alias with target");
+        assert_eq!(
+            save.command,
+            Some(Commands::Snapshot(SnapshotArgs {
+                target: Some("user@example.com".to_string())
+            }))
+        );
+    }
+
+    #[test]
+    fn test_reject_unknown_flags_and_invalid_numbers() {
+        for bad_args in [
+            vec!["agy-token", "--unknown-flag"],
+            vec!["agy-token", "daemon", "--bogus"],
+            vec!["agy-token", "daemon", "--threshold", "NaN"],
+            vec!["agy-token", "daemon", "--cooldown=inf"],
+            vec!["agy-token", "tray", "--unknown"],
+            vec!["agy-token", "web", "--unknown"],
+            vec!["agy-token", "switch", "--unknown"],
+            vec!["agy-token", "test-notify", "--unknown"],
+            vec!["agy-token", "snapshot", "--unknown"],
+            vec!["agy-token", "remove", "1", "--unknown"],
+            vec!["agy-token", "shield", "--unknown"],
+            vec!["agy-token", "list", "--unknown"],
+        ] {
+            assert!(
+                Cli::try_parse_from(&bad_args).is_err(),
+                "expected parse failure for {bad_args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_shield_invalid_choice_formats_expected_stderr() {
+        let err = Cli::try_parse_from(["agy-token", "shield", "a\u{00a0}b"])
+            .expect_err("invalid shield choice should error");
+        assert_eq!(err.kind(), ErrorKind::InvalidValue);
+        let raw_val = match err.get(ContextKind::InvalidValue) {
+            Some(ContextValue::String(v)) => v.as_str(),
+            other => panic!("expected InvalidValue string, got {other:?}"),
+        };
+        let formatted = format_shield_choice_error(raw_val);
+        assert!(formatted.contains("invalid choice: 'a\\xa0b'"));
     }
 }
