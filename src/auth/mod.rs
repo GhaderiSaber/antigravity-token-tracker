@@ -7,7 +7,10 @@ pub mod process_discovery;
 pub mod sqlite;
 pub mod sync;
 
-pub use keyring::{desktop_keyring_token, get_desktop_keyring_token};
+pub use keyring::{
+    KeyringError, clear_desktop_keyring_secret, desktop_keyring_token, get_desktop_keyring_token,
+    parse_keyring_token_record, probe_keyring_session, set_desktop_keyring_secret,
+};
 pub use models::{DiscoveredSession, KeyringTokenRecord, OAuthTokens, UserInfo};
 pub use oauth::{
     CLIENT_ID, CLIENT_SECRETS, TOKEN_URL, USERINFO_URL, ensure_valid_token, fetch_user_info,
@@ -237,5 +240,44 @@ mod tests {
             .expect_err("saving into a regular file path must return SyncError");
         assert!(matches!(err, SyncError::Storage(_)));
         assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn test_keyring_open_session_signature_is_sv() {
+        use zbus::zvariant::{Type, Value};
+
+        fn sig_of<T: Type>(_: &T) -> String {
+            T::SIGNATURE.to_string()
+        }
+
+        let args = keyring::open_plain_session_args();
+        assert_eq!(args.0, "plain");
+        assert!(matches!(args.1, Value::Str(_)));
+        assert_eq!(sig_of(&args), "(sv)");
+    }
+
+    #[test]
+    fn test_parse_keyring_token_record_supports_id_token_email_and_jwt_fallback() {
+        let v235_raw = r#"{
+            "token": {"access_token": "ya29.test", "refresh_token": "1//test"},
+            "auth_method": "consumer",
+            "id_token_email": "  DuzenApp@Gmail.com ",
+            "writer_id": "abc"
+        }"#;
+        let rec = parse_keyring_token_record(v235_raw).expect("valid v2.35 keyring JSON");
+        assert_eq!(rec.email, "duzenapp@gmail.com");
+
+        let jwt_payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(r#"{"email":"JwtUser@Example.com"}"#);
+        let legacy_raw = format!(
+            r#"{{"token":{{"access_token":"ya29.legacy"}},"auth_method":"OAUTH","id_token":"hdr.{jwt_payload}.sig"}}"#
+        );
+        let rec_legacy =
+            parse_keyring_token_record(&legacy_raw).expect("valid legacy keyring JSON");
+        assert_eq!(rec_legacy.email, "jwtuser@example.com");
+
+        let no_email_raw = r#"{"token":{"access_token":"ya29.none"}}"#;
+        let rec_none = parse_keyring_token_record(no_email_raw).expect("valid JSON without email");
+        assert_eq!(rec_none.email, "");
     }
 }

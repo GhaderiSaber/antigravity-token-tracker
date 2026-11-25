@@ -46,33 +46,25 @@ pub async fn run_doctor_suite() -> DoctorReport {
     let mut has_warn = false;
 
     // 1. Linux Secret Service (Keyring)
-    let keyring_ok = match zbus::Connection::session().await {
-        Ok(conn) => zbus::Proxy::new(
-            &conn,
-            "org.freedesktop.secrets",
-            "/org/freedesktop/secrets",
-            "org.freedesktop.Secret.Service",
-        )
-        .await
-        .is_ok(),
-        Err(_) => false,
-    };
-
-    if keyring_ok {
-        items.push(DiagnosticItem {
+    let keyring_diag = match crate::auth::probe_keyring_session().await {
+        Ok(()) => DiagnosticItem {
             component: "Linux Secret Service".into(),
             status: DiagnosticStatus::Pass,
-            details: "org.freedesktop.secrets accessible via D-Bus; keyring ready".into(),
-        });
-    } else {
-        has_warn = true;
-        items.push(DiagnosticItem {
-            component: "Linux Secret Service".into(),
-            status: DiagnosticStatus::Warn,
-            details: "Could not connect to org.freedesktop.secrets; falling back to SQLite tokens"
+            details: "org.freedesktop.secrets OpenSession/SearchItems verified; keyring ready"
                 .into(),
-        });
-    }
+        },
+        Err(err) => {
+            has_warn = true;
+            DiagnosticItem {
+                component: "Linux Secret Service".into(),
+                status: DiagnosticStatus::Warn,
+                details: format!(
+                    "Secret Service session check failed ({err}); falling back to SQLite tokens"
+                ),
+            }
+        }
+    };
+    items.push(keyring_diag);
 
     // 2. Google CloudCode API connectivity
     let client = reqwest::Client::builder()

@@ -104,153 +104,15 @@ pub fn has_account_credentials(email: &str, registered: Option<&AccountsRegistry
 }
 
 pub async fn set_keyring_secret(secret_json_str: &str) -> bool {
-    let Ok(connection) = zbus::Connection::session().await else {
-        return false;
-    };
-    let Ok(service_proxy) = zbus::Proxy::new(
-        &connection,
-        "org.freedesktop.secrets",
-        "/org/freedesktop/secrets",
-        "org.freedesktop.Secret.Service",
-    )
-    .await
-    else {
-        return false;
-    };
-
-    let Ok((_empty, session_path)): Result<
-        (zbus::zvariant::OwnedValue, zbus::zvariant::OwnedObjectPath),
-        _,
-    > = service_proxy.call("OpenSession", &("plain", "")).await
-    else {
-        return false;
-    };
-
-    let mut search_attrs = HashMap::new();
-    search_attrs.insert("service", "gemini");
-    search_attrs.insert("username", "antigravity");
-
-    let Ok((unlocked, _locked)): Result<
-        (
-            Vec<zbus::zvariant::OwnedObjectPath>,
-            Vec<zbus::zvariant::OwnedObjectPath>,
-        ),
-        _,
-    > = service_proxy
-        .call("SearchItems", &(search_attrs.clone(),))
+    crate::auth::set_desktop_keyring_secret(secret_json_str)
         .await
-    else {
-        return false;
-    };
-
-    let secret_struct = (
-        session_path,
-        Vec::<u8>::new(),
-        secret_json_str.as_bytes().to_vec(),
-        "text/plain; charset=utf-8",
-    );
-
-    if !unlocked.is_empty() {
-        let Ok(item_proxy) = zbus::Proxy::new(
-            &connection,
-            "org.freedesktop.secrets",
-            unlocked[0].as_str(),
-            "org.freedesktop.Secret.Item",
-        )
-        .await
-        else {
-            return false;
-        };
-
-        let res: Result<(), _> = item_proxy.call("SetSecret", &(secret_struct,)).await;
-        res.is_ok()
-    } else {
-        let Ok(default_col): Result<zbus::zvariant::OwnedObjectPath, _> =
-            service_proxy.call("ReadAlias", &("default",)).await
-        else {
-            return false;
-        };
-        let Ok(col_proxy) = zbus::Proxy::new(
-            &connection,
-            "org.freedesktop.secrets",
-            default_col.as_str(),
-            "org.freedesktop.Secret.Collection",
-        )
-        .await
-        else {
-            return false;
-        };
-
-        let mut item_props = HashMap::new();
-        item_props.insert(
-            "org.freedesktop.Secret.Item.Label",
-            zbus::zvariant::Value::from("Password for 'antigravity' on 'gemini'"),
-        );
-        item_props.insert(
-            "org.freedesktop.Secret.Item.Attributes",
-            zbus::zvariant::Value::from(search_attrs),
-        );
-
-        let res: Result<
-            (
-                zbus::zvariant::OwnedObjectPath,
-                zbus::zvariant::OwnedObjectPath,
-            ),
-            _,
-        > = col_proxy
-            .call("CreateItem", &(item_props, secret_struct, true))
-            .await;
-        res.is_ok()
-    }
+        .is_ok()
 }
 
 pub async fn clear_keyring_secret() -> bool {
-    let Ok(connection) = zbus::Connection::session().await else {
-        return false;
-    };
-    let Ok(service_proxy) = zbus::Proxy::new(
-        &connection,
-        "org.freedesktop.secrets",
-        "/org/freedesktop/secrets",
-        "org.freedesktop.Secret.Service",
-    )
-    .await
-    else {
-        return false;
-    };
-
-    let mut search_attrs = HashMap::new();
-    search_attrs.insert("service", "gemini");
-    search_attrs.insert("username", "antigravity");
-
-    let Ok((unlocked, _locked)): Result<
-        (
-            Vec<zbus::zvariant::OwnedObjectPath>,
-            Vec<zbus::zvariant::OwnedObjectPath>,
-        ),
-        _,
-    > = service_proxy.call("SearchItems", &(search_attrs,)).await
-    else {
-        return false;
-    };
-
-    if unlocked.is_empty() {
-        return false;
-    }
-
-    let Ok(item_proxy) = zbus::Proxy::new(
-        &connection,
-        "org.freedesktop.secrets",
-        unlocked[0].as_str(),
-        "org.freedesktop.Secret.Item",
-    )
-    .await
-    else {
-        return false;
-    };
-
-    let res: Result<zbus::zvariant::OwnedObjectPath, _> = item_proxy.call("Delete", &()).await;
-    res.is_ok()
+    crate::auth::clear_desktop_keyring_secret()
+        .await
+        .unwrap_or(false)
 }
 
 pub async fn snapshot_desktop_session(email: &str) -> bool {
@@ -303,6 +165,7 @@ pub async fn snapshot_desktop_session(email: &str) -> bool {
                 if let Some(r_tok) = tok.get("refresh_token").and_then(|v| v.as_str()) {
                     acc.refresh_token = Some(r_tok.to_string());
                 }
+                acc.updated_at = Some(chrono::Utc::now().timestamp_millis() as f64 / 1000.0);
                 let _ = save_accounts(&reg);
             }
         }
@@ -399,15 +262,18 @@ pub fn snapshot_ide_session(email: &str) -> bool {
         let _ = fs::write(&ide_file, content);
     }
 
-    // Persist tokens
+    // Persist tokens without clobbering fresher desktop keyring credentials.
     if let Some(tokens) = crate::auth::extract_tokens_from_state_db(&ide_db)
         && let Ok(mut reg) = load_accounts()
         && let Some(acc) = reg.accounts.get_mut(&clean)
     {
-        if !tokens.access_token.is_empty() && acc.access_token.is_none() {
+        if !tokens.access_token.is_empty() && acc.access_token.as_deref().is_none_or(str::is_empty)
+        {
             acc.access_token = Some(tokens.access_token.clone());
         }
-        if !tokens.refresh_token.is_empty() {
+        if !tokens.refresh_token.is_empty()
+            && acc.refresh_token.as_deref().is_none_or(str::is_empty)
+        {
             acc.refresh_token = Some(tokens.refresh_token.clone());
         }
         let _ = save_accounts(&reg);
@@ -423,11 +289,10 @@ pub fn snapshot_ide_session(email: &str) -> bool {
             "token": {
                 "access_token": tokens.access_token,
                 "token_type": "Bearer",
-                "refresh_token": tokens.refresh_token,
-                "expiry": ""
+                "refresh_token": tokens.refresh_token
             },
-            "auth_method": "OAUTH",
-            "id_token": ""
+            "auth_method": "consumer",
+            "id_token_email": clean
         });
         if let Ok(content) = serde_json::to_string_pretty(&token_obj) {
             let _ = fs::write(&keyring_file, content);
@@ -467,6 +332,8 @@ pub async fn snapshot_account(email: &str) -> SnapshotResult {
 pub enum SessionRestoreError {
     #[error("No credentials, saved session files, or refresh tokens found for '{0}'")]
     MissingCredentials(String),
+    #[error("Keyring update failed: {0}")]
+    Keyring(String),
     #[error("I/O error during session restoration: {0}")]
     Io(#[from] std::io::Error),
     #[error("Failed to parse or serialize session JSON: {0}")]
@@ -475,27 +342,192 @@ pub enum SessionRestoreError {
     Sqlite(#[from] rusqlite::Error),
 }
 
-pub async fn restore_desktop_session(email: &str) -> Result<(), SessionRestoreError> {
-    let clean = email.trim().to_lowercase();
-    let source_dir = account_session_dir(&clean).join("desktop");
-    let keyring_file = account_session_dir(&clean).join("keyring_token.json");
+pub(crate) fn update_app_storage_onboarding(storage_file: &Path, clean_email: &str) {
+    if storage_file.is_file()
+        && let Ok(content) = fs::read_to_string(storage_file)
+        && let Ok(mut val) = serde_json::from_str::<Value>(&content)
+    {
+        val["agy.onboarding.lastLoginUsername"] = Value::String(clean_email.to_string());
+        val["jetski.onboarding.lastLoginUsername"] = Value::String(clean_email.to_string());
+        if let Ok(updated) = serde_json::to_string_pretty(&val) {
+            let _ = fs::write(storage_file, updated);
+        }
+    }
+}
 
-    let has_files = source_dir.is_dir();
-    let has_keyring = keyring_file.is_file();
+fn format_rfc3339_expiry(expires_at: Option<f64>) -> Option<String> {
+    let ts = expires_at?;
+    if !ts.is_finite() || ts <= 0.0 {
+        return None;
+    }
+    #[allow(clippy::cast_possible_truncation)]
+    let secs = ts.trunc() as i64;
+    chrono::DateTime::from_timestamp(secs, 0).map(|dt| dt.to_rfc3339())
+}
 
-    let reg = load_accounts().unwrap_or_default();
-    let has_refresh_token = reg
-        .accounts
-        .get(&clean)
-        .and_then(|a| a.refresh_token.as_ref())
-        .is_some_and(|r| !r.is_empty());
+fn account_recency_timestamp(acc: &crate::storage::AccountProfile) -> Option<f64> {
+    match (acc.last_synced, acc.updated_at) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (Some(a), None) | (None, Some(a)) => Some(a),
+        (None, None) => None,
+    }
+}
 
-    if !has_files && !has_keyring && !has_refresh_token {
-        return Err(SessionRestoreError::MissingCredentials(clean));
+fn file_mtime_secs(path: &Path) -> Option<f64> {
+    fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_secs_f64())
+}
+
+/// Builds the JSON payload to write into `org.freedesktop.secrets` for Antigravity Desktop.
+///
+/// Preserves existing `writer_id` / `auth_method` metadata from `keyring_token.json` when
+/// available, ensures `id_token_email` matches `clean_email`, strips empty `expiry` strings
+/// that fail Go RFC3339 parsing, and promotes fresher `refresh_token`/`access_token` values
+/// from `accounts.json` when newer than the saved keyring snapshot.
+#[must_use]
+pub(crate) fn build_restore_keyring_payload(
+    clean_email: &str,
+    keyring_raw: Option<&str>,
+    keyring_mtime: Option<f64>,
+    account: Option<&crate::storage::AccountProfile>,
+) -> Option<String> {
+    if let Some(raw) = keyring_raw
+        && let Ok(mut root) = serde_json::from_str::<Value>(raw)
+        && root.is_object()
+    {
+        root["id_token_email"] = Value::String(clean_email.to_string());
+        if root
+            .get("auth_method")
+            .and_then(|v| v.as_str())
+            .is_none_or(|s| s.trim().is_empty())
+        {
+            root["auth_method"] = Value::String("consumer".to_string());
+        }
+
+        if let Some(acc) = account
+            && let Some(acc_rt) = acc
+                .refresh_token
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        {
+            if !root.get("token").is_some_and(Value::is_object) {
+                root["token"] = serde_json::json!({});
+            }
+            let existing_rt = root["token"]
+                .get("refresh_token")
+                .and_then(|v| v.as_str())
+                .map_or("", str::trim);
+            let acc_ts = account_recency_timestamp(acc);
+            let account_is_newer = match (acc_ts, keyring_mtime) {
+                (Some(a), Some(k)) => a > k,
+                (Some(_), None) => true,
+                _ => false,
+            };
+
+            if existing_rt.is_empty() || (acc_rt != existing_rt && account_is_newer) {
+                root["token"]["refresh_token"] = Value::String(acc_rt.to_string());
+                if let Some(acc_at) = acc
+                    .access_token
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    root["token"]["access_token"] = Value::String(acc_at.to_string());
+                }
+                if let Some(expiry_rfc) = format_rfc3339_expiry(acc.expires_at) {
+                    root["token"]["expiry"] = Value::String(expiry_rfc);
+                }
+            } else if acc_rt == existing_rt && account_is_newer {
+                if let Some(acc_at) = acc
+                    .access_token
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    root["token"]["access_token"] = Value::String(acc_at.to_string());
+                }
+                if let Some(expiry_rfc) = format_rfc3339_expiry(acc.expires_at) {
+                    root["token"]["expiry"] = Value::String(expiry_rfc);
+                }
+            }
+        }
+
+        if let Some(tok_obj) = root.get_mut("token").and_then(Value::as_object_mut)
+            && tok_obj.get("expiry").and_then(Value::as_str) == Some("")
+        {
+            tok_obj.remove("expiry");
+        }
+
+        return serde_json::to_string_pretty(&root).ok();
     }
 
-    let desktop_dir = default_desktop_config_dir();
-    fs::create_dir_all(&desktop_dir)?;
+    let acc = account?;
+    let ref_tok = acc
+        .refresh_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?;
+
+    let mut token_map = serde_json::Map::new();
+    token_map.insert(
+        "access_token".to_string(),
+        Value::String(acc.access_token.clone().unwrap_or_default()),
+    );
+    token_map.insert(
+        "token_type".to_string(),
+        Value::String("Bearer".to_string()),
+    );
+    token_map.insert(
+        "refresh_token".to_string(),
+        Value::String(ref_tok.to_string()),
+    );
+    if let Some(expiry_rfc) = format_rfc3339_expiry(acc.expires_at) {
+        token_map.insert("expiry".to_string(), Value::String(expiry_rfc));
+    }
+
+    let token_obj = serde_json::json!({
+        "token": Value::Object(token_map),
+        "auth_method": "consumer",
+        "id_token_email": clean_email,
+    });
+    serde_json::to_string_pretty(&token_obj).ok()
+}
+
+pub(crate) async fn restore_desktop_session_in_dirs<SetFn, SetFut, ClearFn, ClearFut>(
+    clean_email: &str,
+    desktop_dir: &Path,
+    source_dir: &Path,
+    keyring_file: &Path,
+    reg: &AccountsRegistry,
+    set_secret: SetFn,
+    clear_secret: ClearFn,
+) -> Result<(), SessionRestoreError>
+where
+    SetFn: FnOnce(String) -> SetFut,
+    SetFut: std::future::Future<Output = Result<(), crate::auth::KeyringError>>,
+    ClearFn: FnOnce() -> ClearFut,
+    ClearFut: std::future::Future<Output = Result<bool, crate::auth::KeyringError>>,
+{
+    let has_files = source_dir.is_dir();
+    let has_keyring = keyring_file.is_file();
+    let account = reg.accounts.get(clean_email);
+    let has_refresh_token = account
+        .and_then(|a| a.refresh_token.as_ref())
+        .is_some_and(|r| !r.trim().is_empty());
+
+    if !has_files && !has_keyring && !has_refresh_token {
+        return Err(SessionRestoreError::MissingCredentials(
+            clean_email.to_string(),
+        ));
+    }
+
+    fs::create_dir_all(desktop_dir)?;
 
     if has_files {
         for &f in DESKTOP_FILES_TO_SAVE {
@@ -514,47 +546,59 @@ pub async fn restore_desktop_session(email: &str) -> Result<(), SessionRestoreEr
             }
         }
 
-        // Update app_storage.json
-        let storage_file = desktop_dir.join("app_storage.json");
-        if storage_file.is_file()
-            && let Ok(content) = fs::read_to_string(&storage_file)
-            && let Ok(mut val) = serde_json::from_str::<Value>(&content)
-        {
-            val["jetski.onboarding.lastLoginUsername"] = Value::String(clean.clone());
-            if let Ok(updated) = serde_json::to_string_pretty(&val) {
-                let _ = fs::write(&storage_file, updated);
-            }
-        }
+        update_app_storage_onboarding(&desktop_dir.join("app_storage.json"), clean_email);
     }
 
-    // Restore keyring
-    if has_keyring {
-        if let Ok(raw) = fs::read_to_string(&keyring_file) {
-            let _ = set_keyring_secret(&raw).await;
-        }
-    } else if let Some(acc) = reg.accounts.get(&clean)
-        && let Some(ref_tok) = &acc.refresh_token
-        && !ref_tok.is_empty()
+    let keyring_raw = if has_keyring {
+        fs::read_to_string(keyring_file).ok()
+    } else {
+        None
+    };
+    let keyring_mtime = if has_keyring {
+        file_mtime_secs(keyring_file)
+    } else {
+        None
+    };
+
+    if let Some(payload) =
+        build_restore_keyring_payload(clean_email, keyring_raw.as_deref(), keyring_mtime, account)
     {
-        let token_obj = serde_json::json!({
-            "token": {
-                "access_token": acc.access_token.clone().unwrap_or_default(),
-                "token_type": "Bearer",
-                "refresh_token": ref_tok,
-                "expiry": ""
-            },
-            "auth_method": "OAUTH",
-            "id_token": ""
-        });
-        if let Ok(raw) = serde_json::to_string_pretty(&token_obj) {
-            let _ = set_keyring_secret(&raw).await;
-            let _ = fs::write(&keyring_file, &raw);
+        set_secret(payload.clone())
+            .await
+            .map_err(|e| SessionRestoreError::Keyring(e.to_string()))?;
+
+        if keyring_raw.as_deref() != Some(payload.as_str()) {
+            if let Some(parent) = keyring_file.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            let _ = fs::write(keyring_file, &payload);
         }
     } else {
-        let _ = clear_keyring_secret().await;
+        clear_secret()
+            .await
+            .map_err(|e| SessionRestoreError::Keyring(e.to_string()))?;
     }
 
     Ok(())
+}
+
+pub async fn restore_desktop_session(email: &str) -> Result<(), SessionRestoreError> {
+    let clean = email.trim().to_lowercase();
+    let source_dir = account_session_dir(&clean).join("desktop");
+    let keyring_file = account_session_dir(&clean).join("keyring_token.json");
+    let desktop_dir = default_desktop_config_dir();
+    let reg = load_accounts().unwrap_or_default();
+
+    restore_desktop_session_in_dirs(
+        &clean,
+        &desktop_dir,
+        &source_dir,
+        &keyring_file,
+        &reg,
+        |raw| async move { crate::auth::set_desktop_keyring_secret(&raw).await },
+        crate::auth::clear_desktop_keyring_secret,
+    )
+    .await
 }
 
 pub fn restore_ide_session(email: &str) -> Result<(), SessionRestoreError> {
@@ -590,8 +634,22 @@ pub fn restore_ide_session(email: &str) -> Result<(), SessionRestoreError> {
 }
 
 #[cfg(unix)]
+fn is_zombie_process(pid: i32) -> bool {
+    let stat_path = format!("/proc/{pid}/stat");
+    let Ok(stat) = fs::read_to_string(stat_path) else {
+        return false;
+    };
+    let Some(rparen) = stat.rfind(')') else {
+        return false;
+    };
+    stat.as_bytes()
+        .get(rparen + 2)
+        .is_some_and(|&state| state == b'Z')
+}
+
+#[cfg(unix)]
 fn is_process_alive(pid: i32) -> bool {
-    nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok()
+    !is_zombie_process(pid) && nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok()
 }
 
 #[cfg(not(unix))]
@@ -609,6 +667,10 @@ pub fn antigravity_pids() -> Vec<i32> {
     let mut pids = Vec::new();
 
     for (pid, process) in s.processes() {
+        if process.status() == sysinfo::ProcessStatus::Zombie {
+            continue;
+        }
+
         let pid_u = pid.as_u32() as usize;
         if pid_u == my_pid {
             continue;
@@ -720,7 +782,15 @@ pub fn launch_antigravity() -> bool {
         cmd.process_group(0);
     }
 
-    cmd.spawn().is_ok()
+    match cmd.spawn() {
+        Ok(mut child) => {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 pub fn restart_antigravity() -> bool {
@@ -831,6 +901,45 @@ pub enum SwitchError {
     Io(#[from] std::io::Error),
 }
 
+pub(crate) fn combine_surface_restore_results(
+    surface: SwitchSurface,
+    desktop_res: Option<Result<(), SessionRestoreError>>,
+    ide_res: Option<Result<(), SessionRestoreError>>,
+) -> Result<(bool, bool), SessionRestoreError> {
+    match surface {
+        SwitchSurface::Desktop => {
+            if let Some(res) = desktop_res {
+                res?;
+            }
+            Ok((true, false))
+        }
+        SwitchSurface::Ide => {
+            if let Some(res) = ide_res {
+                res?;
+            }
+            Ok((false, true))
+        }
+        SwitchSurface::Both => {
+            let desktop_ok = match desktop_res {
+                Some(Ok(())) => true,
+                Some(Err(SessionRestoreError::MissingCredentials(_))) | None => false,
+                Some(Err(err)) => return Err(err),
+            };
+            let ide_ok = match ide_res {
+                Some(Ok(())) => true,
+                Some(Err(SessionRestoreError::MissingCredentials(_))) | None => false,
+                Some(Err(err)) => return Err(err),
+            };
+            if !desktop_ok && !ide_ok {
+                return Err(SessionRestoreError::MissingCredentials(
+                    "no desktop or IDE session credentials available".into(),
+                ));
+            }
+            Ok((desktop_ok, ide_ok))
+        }
+    }
+}
+
 pub async fn switch_to_account(
     target_email: &str,
     restart: impl Into<RestartProcess>,
@@ -865,15 +974,19 @@ pub async fn switch_to_account(
     let do_desktop = matches!(surface, SwitchSurface::Both | SwitchSurface::Desktop);
     let do_ide = matches!(surface, SwitchSurface::Both | SwitchSurface::Ide);
 
-    let mut restored_desktop = false;
-    let mut restored_ide = false;
+    let desktop_res = if do_desktop {
+        Some(restore_desktop_session(&clean).await)
+    } else {
+        None
+    };
+    let ide_res = if do_ide {
+        Some(restore_ide_session(&clean))
+    } else {
+        None
+    };
 
-    if do_desktop {
-        restored_desktop = restore_desktop_session(&clean).await.is_ok();
-    }
-    if do_ide {
-        restored_ide = restore_ide_session(&clean).is_ok();
-    }
+    let (restored_desktop, restored_ide) =
+        combine_surface_restore_results(surface, desktop_res, ide_res)?;
 
     // Update active_email and surfaces in registry
     reg.active_email = Some(clean.clone());

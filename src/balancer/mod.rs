@@ -344,4 +344,204 @@ mod tests {
             "No credentials, saved session files, or refresh tokens found for 'missing@example.com'"
         );
     }
+
+    #[test]
+    fn test_update_app_storage_onboarding_sets_agy_and_jetski_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage_path = dir.path().join("app_storage.json");
+        std::fs::write(
+            &storage_path,
+            r#"{
+  "agy.onboarding.lastLoginUsername": "old@example.com",
+  "agy.homeGreeting.next": 0
+}"#,
+        )
+        .unwrap();
+
+        switcher::update_app_storage_onboarding(&storage_path, "new@example.com");
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&storage_path).unwrap()).unwrap();
+        assert_eq!(
+            parsed["agy.onboarding.lastLoginUsername"].as_str(),
+            Some("new@example.com")
+        );
+        assert_eq!(
+            parsed["jetski.onboarding.lastLoginUsername"].as_str(),
+            Some("new@example.com")
+        );
+        assert_eq!(parsed["agy.homeGreeting.next"].as_i64(), Some(0));
+    }
+
+    #[test]
+    fn test_build_restore_keyring_payload_syncs_newer_account_and_sets_id_token_email() {
+        let old_keyring = r#"{
+  "token": {
+    "access_token": "old-access",
+    "token_type": "Bearer",
+    "refresh_token": "1//old-rt",
+    "expiry": ""
+  },
+  "auth_method": "consumer",
+  "writer_id": "writer-123"
+}"#;
+        let newer_acc = crate::storage::AccountProfile {
+            email: "target@example.com".into(),
+            access_token: Some("new-access".into()),
+            refresh_token: Some("1//new-rt".into()),
+            expires_at: Some(1_800_000_000.0),
+            updated_at: Some(2000.0),
+            ..Default::default()
+        };
+
+        let payload = switcher::build_restore_keyring_payload(
+            "target@example.com",
+            Some(old_keyring),
+            Some(1000.0),
+            Some(&newer_acc),
+        )
+        .expect("keyring payload should be built");
+        let parsed: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(
+            parsed["id_token_email"].as_str(),
+            Some("target@example.com")
+        );
+        assert_eq!(parsed["auth_method"].as_str(), Some("consumer"));
+        assert_eq!(parsed["writer_id"].as_str(), Some("writer-123"));
+        assert_eq!(parsed["token"]["refresh_token"].as_str(), Some("1//new-rt"));
+        assert_eq!(parsed["token"]["access_token"].as_str(), Some("new-access"));
+        assert!(
+            parsed["token"]["expiry"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty() && s.contains('T'))
+        );
+
+        // Fallback when keyring_token.json is missing
+        let fallback_acc = crate::storage::AccountProfile {
+            email: "fallback@example.com".into(),
+            access_token: Some("fb-access".into()),
+            refresh_token: Some("1//fb-rt".into()),
+            ..Default::default()
+        };
+        let fb_payload = switcher::build_restore_keyring_payload(
+            "fallback@example.com",
+            None,
+            None,
+            Some(&fallback_acc),
+        )
+        .expect("fallback payload should be built");
+        let fb_parsed: serde_json::Value = serde_json::from_str(&fb_payload).unwrap();
+        assert_eq!(
+            fb_parsed["id_token_email"].as_str(),
+            Some("fallback@example.com")
+        );
+        assert_eq!(fb_parsed["auth_method"].as_str(), Some("consumer"));
+        assert!(fb_parsed["token"].get("expiry").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_restore_desktop_session_in_dirs_propagates_keyring_errors_and_updates_storage() {
+        let tmp = tempfile::tempdir().unwrap();
+        let desktop_dir = tmp.path().join("live_desktop");
+        let source_dir = tmp.path().join("snapshot/desktop");
+        let keyring_file = tmp.path().join("snapshot/keyring_token.json");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        std::fs::write(
+            source_dir.join("app_storage.json"),
+            r#"{"agy.onboarding.lastLoginUsername":"stale@example.com"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &keyring_file,
+            r#"{"token":{"access_token":"ya29.a","refresh_token":"1//a"},"auth_method":"consumer","id_token_email":"target@example.com"}"#,
+        )
+        .unwrap();
+
+        let reg = crate::storage::AccountsRegistry::default();
+
+        // 1. Keyring failure must propagate as Err(SessionRestoreError::Keyring)
+        let err = switcher::restore_desktop_session_in_dirs(
+            "target@example.com",
+            &desktop_dir,
+            &source_dir,
+            &keyring_file,
+            &reg,
+            |_payload| async {
+                Err(crate::auth::KeyringError::InvalidPayload(
+                    "simulated dbus failure".into(),
+                ))
+            },
+            || async { Ok(false) },
+        )
+        .await
+        .expect_err("keyring write failure must not be swallowed");
+        assert!(matches!(err, SessionRestoreError::Keyring(_)));
+
+        // 2. Successful keyring write updates both onboarding keys and writes secret
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+        let captured_clone = std::sync::Arc::clone(&captured);
+        switcher::restore_desktop_session_in_dirs(
+            "target@example.com",
+            &desktop_dir,
+            &source_dir,
+            &keyring_file,
+            &reg,
+            move |payload| async move {
+                *captured_clone.lock().unwrap() = Some(payload);
+                Ok(())
+            },
+            || async { Ok(false) },
+        )
+        .await
+        .expect("restore should succeed when keyring write succeeds");
+
+        let secret = captured.lock().unwrap().clone().expect("secret captured");
+        assert!(secret.contains("\"id_token_email\": \"target@example.com\""));
+
+        let live_storage: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(desktop_dir.join("app_storage.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            live_storage["agy.onboarding.lastLoginUsername"].as_str(),
+            Some("target@example.com")
+        );
+        assert_eq!(
+            live_storage["jetski.onboarding.lastLoginUsername"].as_str(),
+            Some("target@example.com")
+        );
+    }
+
+    #[test]
+    fn test_combine_surface_restore_results_policy() {
+        // Desktop-only account with Surface::Both succeeds when Desktop succeeds & IDE has MissingCredentials
+        let ok_both = switcher::combine_surface_restore_results(
+            SwitchSurface::Both,
+            Some(Ok(())),
+            Some(Err(SessionRestoreError::MissingCredentials("x".into()))),
+        )
+        .unwrap();
+        assert_eq!(ok_both, (true, false));
+
+        // Keyring error on Desktop with Surface::Both must fail even if IDE succeeded
+        let err_keyring = switcher::combine_surface_restore_results(
+            SwitchSurface::Both,
+            Some(Err(SessionRestoreError::Keyring("InvalidArgs".into()))),
+            Some(Ok(())),
+        )
+        .unwrap_err();
+        assert!(matches!(err_keyring, SessionRestoreError::Keyring(_)));
+
+        // Both MissingCredentials fails
+        let err_both = switcher::combine_surface_restore_results(
+            SwitchSurface::Both,
+            Some(Err(SessionRestoreError::MissingCredentials("x".into()))),
+            Some(Err(SessionRestoreError::MissingCredentials("x".into()))),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err_both,
+            SessionRestoreError::MissingCredentials(_)
+        ));
+    }
 }

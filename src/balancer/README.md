@@ -1,39 +1,46 @@
 # Quota Balancer & Session Switcher (`src/balancer`)
 
 ## Overview
-Coordinates multi-account quota balancing algorithms (watermark spread, expiry-first, round-robin), session credential isolation, desktop/IDE session snapshotting, and atomic hot-swapping between accounts.
+Coordinates multi-account quota balancing algorithms (watermark spread, expiry-first, round-robin, reactive), session credential isolation, desktop/IDE session snapshotting, and typed atomic hot-swapping between accounts.
 
 ## Interface
+- `pub enum BalancerStrategy { Watermark, ExpiryFirst, RoundRobin, Reactive }` and `pub struct ParseBalancerStrategyError(pub String)`: Balancing strategy variants with `Display`/`FromStr` and `snake_case` serde `[src/balancer/models.rs:BalancerStrategy, src/balancer/models.rs:ParseBalancerStrategyError]`
 - `pub struct BalancerConfig`: Configuration model for balancing strategy, spread thresholds, intervals, and cooldowns `[src/balancer/models.rs:BalancerConfig]`
 - `pub struct BalancerState`: Persistent state tracking rotation counts, timestamps, and round-robin indexes `[src/balancer/models.rs:BalancerState]`
-- `pub struct PoolAccount`: Account representation within the balancing candidate pool `[src/balancer/balancer.rs:PoolAccount]`
-- `pub struct BalancerDecision`: Decision payload recording evaluation reasons, metrics, and switch targets `[src/balancer/balancer.rs:BalancerDecision]`
+- `pub struct SessionSnapshotMeta`, `pub struct SwitchResult`, `pub struct SnapshotResult`, `pub enum RestartProcess`: Snapshot metadata, switch result projection, and restart policy types `[src/balancer/models.rs:SessionSnapshotMeta, src/balancer/models.rs:SwitchResult, src/balancer/models.rs:SnapshotResult, src/balancer/models.rs:RestartProcess]`
+- `pub const SUPPORTED_STRATEGIES: &[&str]`, `pub struct PoolAccount`, `pub struct BalancerDecision`: Pool candidate model, supported strategy names, and decision payload `[src/balancer/balancer.rs:SUPPORTED_STRATEGIES, src/balancer/balancer.rs:PoolAccount, src/balancer/balancer.rs:BalancerDecision]`
+- `default_balancer_config_file`, `default_balancer_state_file`, `load_balancer_config`, `save_balancer_config`, `load_balancer_state`, `save_balancer_state`: Persistence helpers for `balancer.json` and `balancer_state.json` `[src/balancer/balancer.rs:load_balancer_config, src/balancer/balancer.rs:save_balancer_config, src/balancer/balancer.rs:load_balancer_state, src/balancer/balancer.rs:save_balancer_state]`
+- `account_reset_seconds` / `get_account_reset_seconds`, `eligible_pool_accounts` / `get_eligible_pool_accounts`: Quota pool extraction and reset countdown helpers `[src/balancer/balancer.rs:account_reset_seconds, src/balancer/balancer.rs:eligible_pool_accounts]`
 - `pub fn evaluate_watermark_strategy(active_acc: Option<&PoolAccount>, candidates: &[PoolAccount], spread_pct: f64) -> Option<(PoolAccount, String)>`: Evaluates whether quota spread between active and candidates exceeds threshold `[src/balancer/balancer.rs:evaluate_watermark_strategy]`
 - `pub fn evaluate_expiry_first_strategy(active_acc: Option<&PoolAccount>, candidates: &[PoolAccount], expiry_window_hours: u64, min_quota_pct: f64) -> Option<(PoolAccount, String)>`: Prioritizes accounts whose weekly quota expires soonest `[src/balancer/balancer.rs:evaluate_expiry_first_strategy]`
 - `pub fn evaluate_round_robin_strategy(active_acc: Option<&PoolAccount>, pool: &[PoolAccount], interval_minutes: u64, last_rotation_ts: f64, now: f64) -> Option<(PoolAccount, String)>`: Rotates accounts on a fixed schedule `[src/balancer/balancer.rs:evaluate_round_robin_strategy]`
-- `pub async fn evaluate_and_execute_balancer(analyzed_quotas: &HashMap<String, AccountQuotaResult>, dry_run: bool, force: bool, strategy_override: Option<&str>) -> BalancerDecision`: Main orchestrator executing balancing policies and rotations `[src/balancer/balancer.rs:evaluate_and_execute_balancer]`
-- `pub async fn snapshot_account(email: &str) -> (bool, bool)`: Snapshots active Desktop App and IDE sessions for an account `[src/balancer/switcher.rs:snapshot_account]`
-- `pub async fn switch_to_account(target_email: &str, restart: bool, surface: &str) -> (bool, String)`: Switches active session credentials across desktop, IDE, or both `[src/balancer/switcher.rs:switch_to_account]`
-- `pub fn restart_antigravity() -> bool`: Gracefully restarts running Antigravity processes `[src/balancer/switcher.rs:restart_antigravity]`
+- `pub async fn evaluate_and_execute_balancer(analyzed_quotas: &HashMap<String, AccountQuotaResult>, dry_run: bool, force: bool, strategy_override: Option<BalancerStrategy>) -> BalancerDecision`: Main orchestrator executing balancing policies and rotations `[src/balancer/balancer.rs:evaluate_and_execute_balancer]`
+- `pub enum SwitchSurface { Both, Desktop, Ide }`, `pub struct ParseSwitchSurfaceError(pub String)`, `pub enum SwitchOutcome`, `pub enum SwitchError`, `pub enum SessionRestoreError`: Typed surface selectors, switch outcomes, and error types `[src/balancer/switcher.rs:SwitchSurface, src/balancer/switcher.rs:SwitchOutcome, src/balancer/switcher.rs:SwitchError, src/balancer/switcher.rs:SessionRestoreError]`
+- `DESKTOP_FILES_TO_SAVE`, `DESKTOP_DIRS_TO_SAVE`, `default_sessions_dir`, `default_desktop_config_dir`, `default_ide_state_db`, `ensure_sessions_dir`, `account_session_dir`, `ensure_account_session_dir`, `get_account_session_dir`, `has_account_credentials`: Session storage paths and credential checks `[src/balancer/switcher.rs:has_account_credentials, src/balancer/switcher.rs:get_account_session_dir]`
+- `set_keyring_secret`, `clear_keyring_secret`, `snapshot_desktop_session`, `snapshot_ide_session`, `pub async fn snapshot_account(email: &str) -> SnapshotResult`, `restore_desktop_session`, `restore_ide_session`: Keyring, desktop, and IDE snapshot/restore operations `[src/balancer/switcher.rs:snapshot_account, src/balancer/switcher.rs:restore_desktop_session, src/balancer/switcher.rs:restore_ide_session]`
+- `antigravity_pids`, `get_antigravity_pids`, `is_antigravity_running`, `stop_antigravity`, `launch_antigravity`, `pub fn restart_antigravity() -> bool`: Process detection and lifecycle control for Antigravity Desktop App `[src/balancer/switcher.rs:antigravity_pids, src/balancer/switcher.rs:restart_antigravity]`
+- `pub async fn switch_to_account(target_email: &str, restart: impl Into<RestartProcess>, surface: SwitchSurface) -> Result<SwitchOutcome, SwitchError>`: Atomically snapshots the active account, restores target credentials across desktop/IDE/both, and updates the registry `[src/balancer/switcher.rs:switch_to_account]`
 
 ## Invariants
-- `evaluate_watermark_strategy` triggers rotation only when spread between highest candidate quota and active quota is >= `spread_pct` `[src/balancer/balancer.rs:evaluate_watermark_strategy]`
-- `evaluate_expiry_first_strategy` prioritizes candidates with `reset_seconds <= expiry_window_hours * 3600` and `quota_pct >= min_quota_pct`, or rotates if active `quota_pct <= min_quota_pct` `[src/balancer/balancer.rs:evaluate_expiry_first_strategy]`
-- `evaluate_round_robin_strategy` requires at least 2 eligible accounts, elapsed time >= `interval_minutes * 60`, and advances sequentially `[src/balancer/balancer.rs:evaluate_round_robin_strategy]`
-- `evaluate_and_execute_balancer` skips rotation if balancer is disabled unless `force` is true; enforces cooldown (`now - last_rotation_timestamp >= cooldown_seconds`) unless `force` is true; requires eligible candidate pool >= 2 `[src/balancer/balancer.rs:evaluate_and_execute_balancer]`
-- `get_account_reset_seconds` defaults to 604800 (7 days) if weekly countdown is absent `[src/balancer/balancer.rs:get_account_reset_seconds]`
-- `get_eligible_pool_accounts` marks `is_eligible = true` only if `quota_pct >= min_quota_pct` and `!is_exhausted` `[src/balancer/balancer.rs:get_eligible_pool_accounts]`
-- `ensure_sessions_dir` and `get_account_session_dir` explicitly enforce POSIX permission mode 0o700 on Unix `[src/balancer/switcher.rs:ensure_sessions_dir]`
-- `snapshot_ide_session` rejects snapshot if IDE DB refresh token is mapped to another registered account or email does not match `[src/balancer/switcher.rs:snapshot_ide_session]`
-- `switch_to_account` rejects switch if target has no credentials; returns early if target is already active; always invokes `snapshot_account` on current active account before switching `[src/balancer/switcher.rs:switch_to_account]`
+- `evaluate_watermark_strategy` triggers rotation only when spread between highest candidate quota and active quota is `>= spread_pct` `[src/balancer/balancer.rs:evaluate_watermark_strategy]`
+- `evaluate_expiry_first_strategy` prioritizes candidates with `reset_seconds <= expiry_window_hours * 3600` and `quota_pct >= min_quota_pct`, or rotates to the highest-quota candidate if active `quota_pct <= min_quota_pct` `[src/balancer/balancer.rs:evaluate_expiry_first_strategy]`
+- `evaluate_round_robin_strategy` requires at least 2 eligible accounts, elapsed time `>= interval_minutes * 60`, and a distinct next account `[src/balancer/balancer.rs:evaluate_round_robin_strategy]`
+- `evaluate_and_execute_balancer` skips rotation if balancer is disabled unless `force` is true; returns `STRATEGY_REACTIVE` if effective strategy is `BalancerStrategy::Reactive`; enforces cooldown (`now - last_rotation_timestamp >= cooldown_seconds`) unless `force` is true; requires candidate pool `>= 2`; skips switching on `dry_run` `[src/balancer/balancer.rs:evaluate_and_execute_balancer]`
+- `account_reset_seconds` defaults to 604800 (7 days) if weekly countdown is absent `[src/balancer/balancer.rs:account_reset_seconds]`
+- `eligible_pool_accounts` includes only accounts passing `has_account_credentials`, prioritizes any group whose `display_name` contains `"gemini"`, and marks `is_eligible = true` only if `quota_pct >= min_quota_pct` and `!is_exhausted` `[src/balancer/balancer.rs:eligible_pool_accounts]`
+- `ensure_sessions_dir` and `ensure_account_session_dir` explicitly enforce POSIX permission mode `0o700` on Unix `[src/balancer/switcher.rs:ensure_sessions_dir, src/balancer/switcher.rs:ensure_account_session_dir]`
+- `snapshot_ide_session` rejects snapshot if IDE DB refresh token is mapped to another registered account or DB email does not match `[src/balancer/switcher.rs:snapshot_ide_session]`
+- `restore_desktop_session` returns `Err(SessionRestoreError::MissingCredentials)` if desktop files, `keyring_token.json`, and registry `refresh_token` are all absent; `restore_ide_session` returns `Err(SessionRestoreError::MissingCredentials)` if `ide_tokens.json` is absent `[src/balancer/switcher.rs:restore_desktop_session, src/balancer/switcher.rs:restore_ide_session]`
+- `switch_to_account` returns `Ok(SwitchOutcome::AlreadyActive)` if target is already active; snapshots current active account before switching; rejects missing credentials with `Err(SwitchError::AccountNotFound)` `[src/balancer/switcher.rs:switch_to_account]`
 
 ## Side Effects
-- Creates directories and writes serialized configuration and state files to `balancer_config.json` and `balancer_state.json` `[src/balancer/balancer.rs:save_balancer_config]`
-- Interacts with system Secret Service over D-Bus (`org.freedesktop.secrets`) to set or clear keyring tokens `[src/balancer/switcher.rs:set_keyring_secret]`
-- Copies configuration files, directories, and session metadata to `~/.config/antigravity-token-tracker/sessions/` `[src/balancer/switcher.rs:snapshot_desktop_session]`
-- Executes SQLite `INSERT OR REPLACE` statements into IDE `state.vscdb` `[src/balancer/switcher.rs:restore_ide_session]`
-- Sends POSIX signals (SIGTERM, SIGKILL) to Antigravity OS processes and deletes Singleton locks `[src/balancer/switcher.rs:stop_antigravity]`
-- Spawns detached OS process for Antigravity executable `[src/balancer/switcher.rs:launch_antigravity]`
+- Creates directories and writes serialized configuration and state files to `balancer.json` and `balancer_state.json` `[src/balancer/balancer.rs:save_balancer_config, src/balancer/balancer.rs:save_balancer_state]`
+- Interacts with system Secret Service over D-Bus (`org.freedesktop.secrets`) to set, create, or delete keyring tokens `[src/balancer/switcher.rs:set_keyring_secret, src/balancer/switcher.rs:clear_keyring_secret]`
+- Copies desktop configuration files/directories and writes `keyring_token.json`, `ide_tokens.json`, and `snapshot_meta.json` under `~/.config/antigravity-token-tracker/sessions/` `[src/balancer/switcher.rs:snapshot_desktop_session, src/balancer/switcher.rs:snapshot_ide_session]`
+- Restores desktop files into `~/.config/Antigravity`, updates `app_storage.json`, and persists `accounts.json` `[src/balancer/switcher.rs:restore_desktop_session, src/balancer/switcher.rs:switch_to_account]`
+- Creates `ItemTable` if needed and executes SQLite `INSERT OR REPLACE` statements into IDE `state.vscdb` `[src/balancer/switcher.rs:restore_ide_session]`
+- Sends POSIX signals (`SIGTERM`, `SIGKILL`) to Antigravity OS processes and deletes `SingletonLock`, `SingletonCookie`, and `SingletonSocket` `[src/balancer/switcher.rs:stop_antigravity]`
+- Spawns detached OS process for Antigravity executable in a new process group on Unix `[src/balancer/switcher.rs:launch_antigravity]`
 
 ## Verification
 - Run: `cargo test`

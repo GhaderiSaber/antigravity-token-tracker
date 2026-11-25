@@ -133,10 +133,18 @@ pub async fn sync_from_antigravity(
         }
 
         if let Some(tokens) = extract_tokens_from_state_db(&db_path) {
-            if !tokens.access_token.is_empty() {
+            // Preserve fresher desktop keyring tokens when both surfaces share the same email.
+            let desktop_owns_email = desktop_email.as_deref() == Some(s_email.as_str());
+            if !tokens.access_token.is_empty()
+                && (!desktop_owns_email
+                    || existing.access_token.as_deref().is_none_or(str::is_empty))
+            {
                 existing.access_token = Some(tokens.access_token);
             }
-            if !tokens.refresh_token.is_empty() {
+            if !tokens.refresh_token.is_empty()
+                && (!desktop_owns_email
+                    || existing.refresh_token.as_deref().is_none_or(str::is_empty))
+            {
                 existing.refresh_token = Some(tokens.refresh_token);
             }
         }
