@@ -34,7 +34,8 @@ mkdir -p "$HOME/.config/systemd/user"
 cat << EOF > "$HOME/.config/systemd/user/antigravity-token-tracker.service"
 [Unit]
 Description=Antigravity Account Token & Quota Lifecycle Tray Daemon (Rust Native)
-After=network.target
+After=graphical-session.target
+PartOf=graphical-session.target
 
 [Service]
 Type=simple
@@ -44,12 +45,23 @@ RestartSec=5
 Environment=RUST_LOG=info
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target
 EOF
 
-# Always configure desktop autostart as a universal fallback
-mkdir -p "$HOME/.config/autostart"
-cat << EOF > "$HOME/.config/autostart/agy-token.desktop"
+# Activate background service via systemd if available, else configure desktop autostart fallback
+TRAY_STARTED=false
+if command -v systemctl &>/dev/null && systemctl --user status &>/dev/null; then
+    systemctl --user daemon-reload 2>/dev/null || true
+    if systemctl --user enable --now antigravity-token-tracker.service 2>/dev/null; then
+        rm -f "$HOME/.config/autostart/agy-token.desktop"
+        echo "✓ Enabled and started systemd user service: antigravity-token-tracker.service"
+        TRAY_STARTED=true
+    fi
+fi
+
+if [ "$TRAY_STARTED" = false ]; then
+    mkdir -p "$HOME/.config/autostart"
+    cat << EOF > "$HOME/.config/autostart/agy-token.desktop"
 [Desktop Entry]
 Type=Application
 Name=Antigravity Token Tracker
@@ -60,20 +72,9 @@ Terminal=false
 Categories=Utility;System;
 X-GNOME-Autostart-enabled=true
 EOF
-chmod 644 "$HOME/.config/autostart/agy-token.desktop"
-echo "✓ Configured desktop autostart: $HOME/.config/autostart/agy-token.desktop"
+    chmod 644 "$HOME/.config/autostart/agy-token.desktop"
+    echo "✓ Configured desktop autostart: $HOME/.config/autostart/agy-token.desktop"
 
-# Activate background service via systemd if available, else launch directly
-TRAY_STARTED=false
-if command -v systemctl &>/dev/null && systemctl --user status &>/dev/null; then
-    systemctl --user daemon-reload 2>/dev/null || true
-    if systemctl --user enable --now antigravity-token-tracker.service 2>/dev/null; then
-        echo "✓ Enabled and started systemd user service: antigravity-token-tracker.service"
-        TRAY_STARTED=true
-    fi
-fi
-
-if [ "$TRAY_STARTED" = false ]; then
     # Launch in background for current session
     nohup "$TARGET_BIN" tray >/dev/null 2>&1 &
     echo "✓ Started background tray indicator in current session (PID $!)"

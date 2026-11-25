@@ -782,6 +782,42 @@ options:
     );
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DaemonCliArgs {
+    interval_secs: u64,
+    auto_switch: bool,
+    launch_tray: bool,
+}
+
+fn parse_daemon_args(argv: &[OsString]) -> DaemonCliArgs {
+    let mut parsed = DaemonCliArgs {
+        interval_secs: 60,
+        auto_switch: false,
+        launch_tray: false,
+    };
+    let mut i = 0;
+    while i < argv.len() {
+        if argv[i] == "--interval" && i + 1 < argv.len() {
+            if let Some(val) = argv[i + 1].to_str().and_then(|s| s.parse::<u64>().ok()) {
+                parsed.interval_secs = val;
+            }
+            i += 1;
+        } else if let Some(arg_str) = argv[i].to_str() {
+            if let Some(val_str) = arg_str.strip_prefix("--interval=") {
+                if let Ok(val) = val_str.parse::<u64>() {
+                    parsed.interval_secs = val;
+                }
+            } else if arg_str == "--auto-switch" {
+                parsed.auto_switch = true;
+            } else if arg_str == "--tray" {
+                parsed.launch_tray = true;
+            }
+        }
+        i += 1;
+    }
+    parsed
+}
+
 fn run_daemon_doctor(command: &str, _matches: &ArgMatches) -> ExitCode {
     let argv: Vec<OsString> = std::env::args_os().collect();
     if argv.iter().any(|a| a == "--help" || a == "-h") {
@@ -826,40 +862,89 @@ fn run_daemon_doctor(command: &str, _matches: &ArgMatches) -> ExitCode {
     }
 
     if command == "daemon" {
-        let mut interval_secs = 60u64;
-        let mut auto_switch = false;
-        let mut i = 0;
-        while i < argv.len() {
-            if argv[i] == "--interval" && i + 1 < argv.len() {
-                if let Some(val) = argv[i + 1].to_str().and_then(|s| s.parse::<u64>().ok()) {
-                    interval_secs = val;
-                }
-                i += 1;
-            } else if let Some(arg_str) = argv[i].to_str() {
-                if let Some(val_str) = arg_str.strip_prefix("--interval=") {
-                    if let Ok(val) = val_str.parse::<u64>() {
-                        interval_secs = val;
-                    }
-                } else if arg_str == "--auto-switch" {
-                    auto_switch = true;
-                }
-            }
-            i += 1;
-        }
+        let parsed = parse_daemon_args(&argv);
 
         println!("Antigravity Token Tracker Daemon started.");
         let Ok(rt) = tokio::runtime::Runtime::new() else {
             return ExitCode::from(1);
         };
-        let _ = rt.block_on(async {
+        let ok = rt.block_on(async {
             let (tx, rx) = tokio::sync::watch::channel(false);
+            let signal_tx = tx.clone();
             tokio::spawn(async move {
-                let _ = tokio::signal::ctrl_c().await;
-                let _ = tx.send(true);
+                #[cfg(unix)]
+                {
+                    let mut sigterm =
+                        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                            .ok();
+                    tokio::select! {
+                        _ = tokio::signal::ctrl_c() => {}
+                        _ = async {
+                            if let Some(ref mut term) = sigterm {
+                                term.recv().await;
+                            } else {
+                                std::future::pending::<()>().await;
+                            }
+                        } => {}
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = tokio::signal::ctrl_c().await;
+                }
+                let _ = signal_tx.send(true);
             });
-            tracker_lib::daemon::run_daemon(interval_secs, auto_switch, Some(rx)).await
+
+            if parsed.launch_tray {
+                let daemon_tx = tx.clone();
+                let daemon_rx = rx.clone();
+                let tray_tx = tx;
+                let tray_rx = rx;
+                let (daemon_res, tray_res) = tokio::join!(
+                    async move {
+                        let res = tracker_lib::daemon::run_daemon(
+                            parsed.interval_secs,
+                            parsed.auto_switch,
+                            Some(daemon_rx),
+                        )
+                        .await;
+                        let _ = daemon_tx.send(true);
+                        res
+                    },
+                    async move {
+                        let res =
+                            tracker_lib::tray::run_tray(parsed.interval_secs, None, Some(tray_rx))
+                                .await;
+                        let _ = tray_tx.send(true);
+                        res
+                    }
+                );
+                if let Err(err) = &daemon_res {
+                    eprintln!("[Daemon] Error: {err}");
+                }
+                if let Err(err) = &tray_res {
+                    eprintln!("[Tray] Error: {err}");
+                }
+                daemon_res.is_ok() && tray_res.is_ok()
+            } else {
+                let res = tracker_lib::daemon::run_daemon(
+                    parsed.interval_secs,
+                    parsed.auto_switch,
+                    Some(rx),
+                )
+                .await;
+                let _ = tx.send(true);
+                if let Err(err) = &res {
+                    eprintln!("[Daemon] Error: {err}");
+                }
+                res.is_ok()
+            }
         });
-        return ExitCode::SUCCESS;
+        return if ok {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::from(1)
+        };
     }
 
     ExitCode::SUCCESS
@@ -1055,7 +1140,7 @@ fn run_tray(command: &str, _matches: &ArgMatches) -> ExitCode {
             return ExitCode::from(1);
         };
 
-        if let Err(e) = rt.block_on(tracker_lib::tray::run_tray(interval, None)) {
+        if let Err(e) = rt.block_on(tracker_lib::tray::run_tray(interval, None, None)) {
             eprintln!("[Tray] Error: {e}");
             return ExitCode::from(1);
         }
@@ -1082,4 +1167,34 @@ fn main() -> ExitCode {
         }
     }
     ExitCode::from(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_daemon_args_reads_tray_interval_and_auto_switch() {
+        let args = vec![
+            OsString::from("agy-token"),
+            OsString::from("daemon"),
+            OsString::from("--interval"),
+            OsString::from("300"),
+            OsString::from("--auto-switch"),
+            OsString::from("--tray"),
+        ];
+        let parsed = parse_daemon_args(&args);
+        assert_eq!(parsed.interval_secs, 300);
+        assert!(parsed.auto_switch);
+        assert!(parsed.launch_tray);
+    }
+
+    #[test]
+    fn test_parse_daemon_args_defaults() {
+        let args = vec![OsString::from("agy-token"), OsString::from("daemon")];
+        let parsed = parse_daemon_args(&args);
+        assert_eq!(parsed.interval_secs, 60);
+        assert!(!parsed.auto_switch);
+        assert!(!parsed.launch_tray);
+    }
 }
