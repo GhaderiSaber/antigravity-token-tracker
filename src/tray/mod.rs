@@ -55,34 +55,46 @@ fn select_active_session_summary(
     (Some(primary_email), indicator, summary)
 }
 
+/// Inputs used by [`build_tray_state_from_data`] to construct a [`TrayState`].
+#[derive(Debug, Clone)]
+pub struct TrayStateInput<'a> {
+    /// Fetched quota snapshots keyed by account email.
+    pub quotas: &'a HashMap<String, AccountQuotaResult>,
+    /// Registered accounts to expose in the tray switch submenu.
+    pub accounts: Vec<AccountProfile>,
+    /// Current egress IP and Geo-Shield compliance metadata.
+    pub geo_info: &'a EgressGeo,
+    /// Whether IP Killswitch Shield protection is enabled.
+    pub is_shield_enabled: bool,
+    /// Whether multi-account Auto-Balancer rotation is enabled.
+    pub is_balancer_enabled: bool,
+    /// Active Auto-Balancer rotation strategy.
+    pub balancer_strategy: BalancerStrategy,
+    /// Best ready backup candidate `(email, remaining_percent)`, if any.
+    pub backup_candidate: Option<(String, f64)>,
+    /// Directory where rendered tray PNG icons are cached.
+    pub icon_cache_dir: &'a Path,
+}
+
 /// Builds a [`TrayState`] snapshot from fetched quota, account, geo, and policy inputs.
 ///
 /// Renders the corresponding tray icon in memory and ensures its PNG representation
-/// exists in `icon_cache_dir` on cache miss.
+/// exists in `input.icon_cache_dir` on cache miss.
 #[must_use]
-#[allow(clippy::too_many_arguments)]
-pub fn build_tray_state_from_data(
-    quotas: &HashMap<String, AccountQuotaResult>,
-    mut accounts: Vec<AccountProfile>,
-    geo_info: &EgressGeo,
-    is_shield_enabled: bool,
-    is_balancer_enabled: bool,
-    balancer_strategy: BalancerStrategy,
-    backup_candidate: Option<(String, f64)>,
-    icon_cache_dir: &Path,
-) -> TrayState {
+pub fn build_tray_state_from_data(input: TrayStateInput<'_>) -> TrayState {
+    let mut accounts = input.accounts;
     accounts.sort_by(|a, b| a.email.cmp(&b.email));
 
-    let (active_email, indicator, active_summary) = select_active_session_summary(quotas);
+    let (active_email, indicator, active_summary) = select_active_session_summary(input.quotas);
     let (icon, icon_name) = render_tray_icon(indicator);
-    if let Err(err) = ensure_cached_icon_png(indicator, icon_cache_dir) {
+    if let Err(err) = ensure_cached_icon_png(indicator, input.icon_cache_dir) {
         eprintln!("[Tray] Warning: failed to cache tray icon PNG: {err}");
     }
 
-    let geo_summary = if geo_info.country_code.is_empty() {
-        geo_info.ip.clone()
+    let geo_summary = if input.geo_info.country_code.is_empty() {
+        input.geo_info.ip.clone()
     } else {
-        format!("{} ({})", geo_info.ip, geo_info.country_code)
+        format!("{} ({})", input.geo_info.ip, input.geo_info.country_code)
     };
 
     TrayState {
@@ -95,11 +107,11 @@ pub fn build_tray_state_from_data(
         icon_height: icon.height,
         accounts,
         geo_summary,
-        is_restricted: geo_info.is_restricted,
-        is_shield_enabled,
-        is_balancer_enabled,
-        balancer_strategy,
-        backup_candidate,
+        is_restricted: input.geo_info.is_restricted,
+        is_shield_enabled: input.is_shield_enabled,
+        is_balancer_enabled: input.is_balancer_enabled,
+        balancer_strategy: input.balancer_strategy,
+        backup_candidate: input.backup_candidate,
     }
 }
 
@@ -133,16 +145,17 @@ async fn refresh_tray_state(
         5.0,
     );
 
-    let new_state = build_tray_state_from_data(
-        &q_map,
-        acc_list,
-        &geo_info,
-        sh_cfg.enabled,
-        b_cfg.enabled,
-        b_cfg.strategy,
+    let icon_cache_dir = default_icon_cache_dir();
+    let new_state = build_tray_state_from_data(TrayStateInput {
+        quotas: &q_map,
+        accounts: acc_list,
+        geo_info: &geo_info,
+        is_shield_enabled: sh_cfg.enabled,
+        is_balancer_enabled: b_cfg.enabled,
+        balancer_strategy: b_cfg.strategy,
         backup_candidate,
-        &default_icon_cache_dir(),
-    );
+        icon_cache_dir: &icon_cache_dir,
+    });
 
     {
         let mut st = shared_state
@@ -512,16 +525,16 @@ mod tests {
         );
 
         let dir = tempfile::tempdir().unwrap();
-        let state = build_tray_state_from_data(
-            &q_map,
-            vec![],
-            &EgressGeo::default(),
-            false,
-            false,
-            BalancerStrategy::ExpiryFirst,
-            Some(("backup@example.com".into(), 95.0)),
-            dir.path(),
-        );
+        let state = build_tray_state_from_data(TrayStateInput {
+            quotas: &q_map,
+            accounts: vec![],
+            geo_info: &EgressGeo::default(),
+            is_shield_enabled: false,
+            is_balancer_enabled: false,
+            balancer_strategy: BalancerStrategy::ExpiryFirst,
+            backup_candidate: Some(("backup@example.com".into(), 95.0)),
+            icon_cache_dir: dir.path(),
+        });
         assert_eq!(state.indicator, QuotaIndicator::Available(42.5));
         assert_eq!(state.active_email.as_deref(), Some("active@example.com"));
         assert_eq!(
@@ -534,16 +547,16 @@ mod tests {
     fn test_build_tray_state_no_active_session_maps_to_exhausted() {
         let q_map = HashMap::new();
         let dir = tempfile::tempdir().unwrap();
-        let state = build_tray_state_from_data(
-            &q_map,
-            vec![],
-            &EgressGeo::default(),
-            true,
-            true,
-            BalancerStrategy::Watermark,
-            None,
-            dir.path(),
-        );
+        let state = build_tray_state_from_data(TrayStateInput {
+            quotas: &q_map,
+            accounts: vec![],
+            geo_info: &EgressGeo::default(),
+            is_shield_enabled: true,
+            is_balancer_enabled: true,
+            balancer_strategy: BalancerStrategy::Watermark,
+            backup_candidate: None,
+            icon_cache_dir: dir.path(),
+        });
         assert_eq!(state.indicator, QuotaIndicator::Exhausted);
         assert_eq!(state.active_email, None);
         assert_eq!(state.active_summary, "No active session detected");
@@ -614,16 +627,16 @@ mod tests {
                 error: None,
             },
         );
-        let state = build_tray_state_from_data(
-            &q_map,
+        let state = build_tray_state_from_data(TrayStateInput {
+            quotas: &q_map,
             accounts,
-            &EgressGeo::default(),
-            false,
-            false,
-            BalancerStrategy::ExpiryFirst,
-            Some(("other@example.com".into(), 90.0)),
-            dir.path(),
-        );
+            geo_info: &EgressGeo::default(),
+            is_shield_enabled: false,
+            is_balancer_enabled: false,
+            balancer_strategy: BalancerStrategy::ExpiryFirst,
+            backup_candidate: Some(("other@example.com".into(), 90.0)),
+            icon_cache_dir: dir.path(),
+        });
 
         let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut tray = AntigravityTray {

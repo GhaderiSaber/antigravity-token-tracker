@@ -782,35 +782,75 @@ options:
     );
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct DaemonCliArgs {
     interval_secs: u64,
     auto_switch: bool,
+    threshold: f64,
+    cooldown_secs: f64,
+    restart: bool,
     launch_tray: bool,
+}
+
+fn parse_finite_f64(raw: &str) -> Option<f64> {
+    raw.parse::<f64>().ok().filter(|v| v.is_finite())
 }
 
 fn parse_daemon_args(argv: &[OsString]) -> DaemonCliArgs {
     let mut parsed = DaemonCliArgs {
         interval_secs: 60,
         auto_switch: false,
+        threshold: 1.0,
+        cooldown_secs: 120.0,
+        restart: true,
         launch_tray: false,
     };
     let mut i = 0;
     while i < argv.len() {
-        if argv[i] == "--interval" && i + 1 < argv.len() {
-            if let Some(val) = argv[i + 1].to_str().and_then(|s| s.parse::<u64>().ok()) {
-                parsed.interval_secs = val;
-            }
+        let Some(arg_str) = argv[i].to_str() else {
             i += 1;
-        } else if let Some(arg_str) = argv[i].to_str() {
-            if let Some(val_str) = arg_str.strip_prefix("--interval=") {
-                if let Ok(val) = val_str.parse::<u64>() {
+            continue;
+        };
+        let next_str = argv.get(i + 1).and_then(|s| s.to_str());
+        match arg_str {
+            "--interval" => {
+                if let Some(val) = next_str.and_then(|s| s.parse::<u64>().ok()) {
                     parsed.interval_secs = val;
+                    i += 1;
                 }
-            } else if arg_str == "--auto-switch" {
-                parsed.auto_switch = true;
-            } else if arg_str == "--tray" {
-                parsed.launch_tray = true;
+            }
+            "--threshold" => {
+                if let Some(val) = next_str.and_then(parse_finite_f64) {
+                    parsed.threshold = val;
+                    i += 1;
+                }
+            }
+            "--cooldown" => {
+                if let Some(val) = next_str.and_then(parse_finite_f64) {
+                    parsed.cooldown_secs = val;
+                    i += 1;
+                }
+            }
+            "--auto-switch" => parsed.auto_switch = true,
+            "--no-restart" => parsed.restart = false,
+            "--tray" => parsed.launch_tray = true,
+            _ => {
+                if let Some(val) = arg_str
+                    .strip_prefix("--interval=")
+                    .and_then(|s| s.parse::<u64>().ok())
+                {
+                    parsed.interval_secs = val;
+                } else if let Some(val) = arg_str
+                    .strip_prefix("--threshold=")
+                    .and_then(parse_finite_f64)
+                {
+                    parsed.threshold = val;
+                } else if let Some(val) = arg_str
+                    .strip_prefix("--cooldown=")
+                    .and_then(parse_finite_f64)
+                {
+                    parsed.cooldown_secs = val;
+                }
             }
         }
         i += 1;
@@ -895,6 +935,18 @@ fn run_daemon_doctor(command: &str, _matches: &ArgMatches) -> ExitCode {
                 let _ = signal_tx.send(true);
             });
 
+            let daemon_options = tracker_lib::daemon::DaemonRunOptions {
+                interval_secs: parsed.interval_secs,
+                auto_switch: parsed.auto_switch,
+                threshold: parsed.threshold,
+                cooldown_seconds: parsed.cooldown_secs,
+                restart: if parsed.restart {
+                    tracker_lib::daemon::FailoverRestart::Restart
+                } else {
+                    tracker_lib::daemon::FailoverRestart::NoRestart
+                },
+            };
+
             if parsed.launch_tray {
                 let daemon_tx = tx.clone();
                 let daemon_rx = rx.clone();
@@ -902,9 +954,8 @@ fn run_daemon_doctor(command: &str, _matches: &ArgMatches) -> ExitCode {
                 let tray_rx = rx;
                 let (daemon_res, tray_res) = tokio::join!(
                     async move {
-                        let res = tracker_lib::daemon::run_daemon(
-                            parsed.interval_secs,
-                            parsed.auto_switch,
+                        let res = tracker_lib::daemon::run_daemon_with_options(
+                            daemon_options,
                             Some(daemon_rx),
                         )
                         .await;
@@ -927,12 +978,8 @@ fn run_daemon_doctor(command: &str, _matches: &ArgMatches) -> ExitCode {
                 }
                 daemon_res.is_ok() && tray_res.is_ok()
             } else {
-                let res = tracker_lib::daemon::run_daemon(
-                    parsed.interval_secs,
-                    parsed.auto_switch,
-                    Some(rx),
-                )
-                .await;
+                let res =
+                    tracker_lib::daemon::run_daemon_with_options(daemon_options, Some(rx)).await;
                 let _ = tx.send(true);
                 if let Err(err) = &res {
                     eprintln!("[Daemon] Error: {err}");
@@ -1174,27 +1221,74 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_daemon_args_reads_tray_interval_and_auto_switch() {
+    fn test_parse_daemon_args_reads_all_space_separated_flags() {
         let args = vec![
             OsString::from("agy-token"),
             OsString::from("daemon"),
             OsString::from("--interval"),
             OsString::from("300"),
             OsString::from("--auto-switch"),
+            OsString::from("--threshold"),
+            OsString::from("5.5"),
+            OsString::from("--cooldown"),
+            OsString::from("45.0"),
+            OsString::from("--no-restart"),
             OsString::from("--tray"),
         ];
         let parsed = parse_daemon_args(&args);
         assert_eq!(parsed.interval_secs, 300);
         assert!(parsed.auto_switch);
+        assert!((parsed.threshold - 5.5).abs() < f64::EPSILON);
+        assert!((parsed.cooldown_secs - 45.0).abs() < f64::EPSILON);
+        assert!(!parsed.restart);
         assert!(parsed.launch_tray);
     }
 
     #[test]
-    fn test_parse_daemon_args_defaults() {
-        let args = vec![OsString::from("agy-token"), OsString::from("daemon")];
+    fn test_parse_daemon_args_reads_equals_syntax() {
+        let args = vec![
+            OsString::from("agy-token"),
+            OsString::from("daemon"),
+            OsString::from("--interval=180"),
+            OsString::from("--threshold=2.25"),
+            OsString::from("--cooldown=90.5"),
+            OsString::from("--auto-switch"),
+            OsString::from("--no-restart"),
+            OsString::from("--tray"),
+        ];
         let parsed = parse_daemon_args(&args);
-        assert_eq!(parsed.interval_secs, 60);
-        assert!(!parsed.auto_switch);
-        assert!(!parsed.launch_tray);
+        assert_eq!(parsed.interval_secs, 180);
+        assert!(parsed.auto_switch);
+        assert!((parsed.threshold - 2.25).abs() < f64::EPSILON);
+        assert!((parsed.cooldown_secs - 90.5).abs() < f64::EPSILON);
+        assert!(!parsed.restart);
+        assert!(parsed.launch_tray);
+    }
+
+    #[test]
+    fn test_parse_daemon_args_defaults_and_ignores_invalid_values() {
+        let defaults = parse_daemon_args(&[OsString::from("agy-token"), OsString::from("daemon")]);
+        assert_eq!(defaults.interval_secs, 60);
+        assert!(!defaults.auto_switch);
+        assert!((defaults.threshold - 1.0).abs() < f64::EPSILON);
+        assert!((defaults.cooldown_secs - 120.0).abs() < f64::EPSILON);
+        assert!(defaults.restart);
+        assert!(!defaults.launch_tray);
+
+        let invalid = parse_daemon_args(&[
+            OsString::from("agy-token"),
+            OsString::from("daemon"),
+            OsString::from("--interval"),
+            OsString::from("not_a_number"),
+            OsString::from("--threshold"),
+            OsString::from("NaN"),
+            OsString::from("--cooldown=inf"),
+            OsString::from("--tray"),
+        ]);
+        assert_eq!(invalid.interval_secs, 60);
+        assert!((invalid.threshold - 1.0).abs() < f64::EPSILON);
+        assert!((invalid.cooldown_secs - 120.0).abs() < f64::EPSILON);
+        assert!(invalid.restart);
+        assert!(invalid.launch_tray);
     }
 }

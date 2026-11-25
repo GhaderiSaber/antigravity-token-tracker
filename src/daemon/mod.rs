@@ -110,4 +110,29 @@ mod tests {
         let res = handle.await.unwrap();
         assert!(res.is_ok());
     }
+
+    #[tokio::test]
+    async fn test_run_daemon_with_options_defaults_and_shutdown() {
+        let opts = DaemonRunOptions::new();
+        assert_eq!(opts, DaemonRunOptions::default());
+        assert_eq!(opts.interval_secs, 60);
+        assert!(!opts.auto_switch);
+        assert!((opts.threshold - 1.0).abs() < f64::EPSILON);
+        assert!((opts.cooldown_seconds - 120.0).abs() < f64::EPSILON);
+        assert_eq!(opts.restart, FailoverRestart::Restart);
+        assert!(opts.restart.should_restart());
+        assert!(!FailoverRestart::NoRestart.should_restart());
+
+        let custom = DaemonRunOptions {
+            interval_secs: 0,
+            auto_switch: true,
+            threshold: 5.0,
+            cooldown_seconds: 30.0,
+            restart: FailoverRestart::NoRestart,
+        };
+        let (tx, rx) = tokio::sync::watch::channel(true);
+        drop(tx);
+        let res = run_daemon_with_options(custom, Some(rx)).await;
+        assert!(res.is_ok());
+    }
 }
