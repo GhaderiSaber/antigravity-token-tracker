@@ -2,3 +2,9 @@ bin.name = "run_tracker"
 args = ["list"]
 status.code = 0
 fs.sandbox = true
+
+[env]
+remove = ["XDG_CONFIG_HOME"]
+
+[env.add]
+HOME = "."

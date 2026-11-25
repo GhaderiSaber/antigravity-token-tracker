@@ -318,3 +318,33 @@ No need to open a browser, log out, or re-enter 2FA every time an account exhaus
 ## 📂 Configuration & History
 - Account credentials: `~/.config/antigravity-token-tracker/accounts.json` (chmod 0600)
 - Historical quota log: `~/.gemini/antigravity/token_history.jsonl`
+
+---
+
+## System Overview
+Antigravity Token Tracker (`run_tracker` / `agy-token` + `tracker_lib`) is a standalone Rust service, CLI, D-Bus system tray applet, and embedded React SPA web dashboard that monitors Google Antigravity multi-account OAuth sessions, tracks weekly and 5-hour model quotas, estimates burn-rate velocity, rotates accounts across balancing strategies, and enforces outbound IP Geo-Shield killswitch protection.
+
+## Local Interface & Invariants
+- `install.sh`: Compiles `cargo build --release`, installs `target/release/run_tracker` to `$HOME/.local/bin/agy-token`, provisions `$HOME/.config/systemd/user/antigravity-token-tracker.service` (`tray --interval 60`) and `$HOME/.config/autostart/agy-token.desktop`, optionally updates shell `PATH` profiles, and smoke-tests `$TARGET_BIN --help`; exits with status 1 if `cargo` is missing or the binary smoke test fails `[install.sh]`
+- `uninstall.sh`: Stops/disables `antigravity-token-tracker.service`, terminates running `agy-token` processes, and removes systemd unit, desktop autostart/application entries, CLI binaries/symlinks, and `tray.lock` while preserving `~/.config/antigravity-token-tracker` account data `[uninstall.sh]`
+- Crate configuration targets Rust Edition `2024` (`rust-version = "1.85"`) exposing binary `run_tracker` (`src/main.rs`) and library `tracker_lib` (`src/lib.rs`) `[Cargo.toml]`
+
+## Subdirectories & System Boundaries
+- [src](./src/README.md): Rust backend core and CLI entrypoint (`run_tracker` / `tracker_lib`) coordinating command dispatch and 9 domain subsystems (`auth`, `balancer`, `cli`, `daemon`, `quota`, `shield`, `storage`, `tray`, `web`)
+- [frontend](./frontend/README.md): Vite + Tailwind CSS + React SPA client source (`frontend/src`) built into `src/web/dist` and served by the embedded Axum web server
+
+## Global Invariants
+- Core domain types across `auth`, `balancer`, `shield`, `storage`, `quota`, and `daemon` statically satisfy `Send + Sync` at compile time `[src/lib.rs]`
+- Account emails are normalized to trimmed lowercase on persistence, lookup, and switching; `accounts.json` and `shield.json` writes use `0o700` config directories, `0o600` `.tmp` files, atomic renames, and advisory `.accounts.lock` file locking for account registry operations `[src/storage/storage.rs:StorageManager::save_accounts, src/shield/shield.rs:save_shield_config]`
+- Session switching (`switch_to_account`) snapshots the currently active account before restoring target desktop/IDE credentials and enforces `0o700` session directories `[src/balancer/switcher.rs:switch_to_account]`
+- The system tray applet enforces single-instance execution via exclusive `flock` on `tray.lock` (unlocking on `Drop` without unlinking), and the embedded HTTP/SSE server binds strictly to `127.0.0.1:{port}` with localhost-only CORS `[src/tray/lock.rs:TrayLock::acquire, src/web/server.rs:start_web_server]`
+- Geo-Shield evaluates egress IP geolocation against `ShieldMode::Restricted` (7 restricted ISO codes) or `ShieldMode::Whitelist` and terminates Antigravity processes (`SIGTERM`, fallback `SIGKILL`) on policy breach when enabled `[src/shield/shield.rs:evaluate_and_enforce_shield]`
+
+## Global Side Effects
+- Reads and mutates local Antigravity state (`~/.config/Antigravity`, IDE `state.vscdb`), Secret Service keyring items via D-Bus (`org.freedesktop.secrets`), and `accounts.json` / `balancer.json` / `shield.json` / `token_history.jsonl`
+- Performs outbound HTTPS calls to Google OAuth2 (`oauth2.googleapis.com`, `https://www.googleapis.com/oauth2/v3/userinfo`), Google CloudCode PA (`daily-cloudcode-pa.googleapis.com`), and IP geolocation providers (`ipwho.is`, `ipapi.co`), plus local HTTPS RPC calls to `127.0.0.1` Language Server ports
+- Spawns/terminates Antigravity OS processes, sends desktop notifications (`org.freedesktop.Notifications` / `notify-send`), registers a StatusNotifierItem on session D-Bus, and serves HTTP/SSE traffic on `127.0.0.1:8765`
+
+## System Verification
+- Run: `cargo test`
+- Run: `cd frontend && npm run build`

@@ -31,15 +31,15 @@ Root package for the Rust implementation of Antigravity Token Tracker (`run_trac
 - Shield allow parameter requires at least one non-empty country code or command exits with code 1 `[src/main.rs:run_shield]`
 - Shield action parameter must be `'kill_process'`, `'kill_network'`, or `'both'` or command exits with code 1 `[src/main.rs:run_shield]`
 - Check command exits with code 1 if any account quota is exhausted (`quota_snap.is_gemini_exhausted == Some(true)`), otherwise exits with SUCCESS `[src/main.rs:run_pace_check]`
-- Doctor command exits with SUCCESS (code 0) only if all diagnostic test items report status `'PASS'`, otherwise exits with code 1 `[src/main.rs:run_daemon_doctor]`
-- CLI returns `ExitCode::SUCCESS` when arguments count is <= 1 or `'-h'`/`'--help'` is requested `[src/main.rs:main]`
+- Doctor command exits with SUCCESS (code 0) only if all diagnostic test items report status `DiagnosticStatus::Pass` or `DiagnosticStatus::Info`, otherwise exits with code 1 `[src/main.rs:run_daemon_doctor]`
+- CLI returns `ExitCode::SUCCESS` when arguments count is <= 1 or `argv.len() == 2` with `'-h'`/`'--help'`; individual subcommand handlers also inspect `--help`/`-h` `[src/main.rs:main]`
 - CLI exits with code 1 when argument parsing fails or command is unrecognized `[src/main.rs:main]`
 
 ## Side Effects
 - Creates or appends to log file at path specified by `RUST_ANYTHING_FALLBACK_LOG` `[src/main.rs:report_fallbacks]`
 - Writes updated shield configuration to disk `[src/main.rs:run_shield]`
 - Terminates active Antigravity processes using SIGKILL/SIGTERM `[src/main.rs:run_shield]`
-- Performs external network HTTP queries to fetch egress IP geolocation and quota snapshots `[src/main.rs:run_shield]`
+- Performs external network HTTP queries to fetch egress IP geolocation `[src/main.rs:run_shield]` and quota snapshots `[src/main.rs:run_pace_check, src/main.rs:run_status_ip, src/main.rs:run_daemon_doctor]`
 - Synchronizes active sessions with local SQLite databases and persistent JSON storage `[src/main.rs:run_sync]`
 - Binds TCP listener and serves HTTP web dashboard on specified port `[src/main.rs:run_web]`
 - Initializes D-Bus connection and runs KSNI system tray event loop `[src/main.rs:run_tray]`

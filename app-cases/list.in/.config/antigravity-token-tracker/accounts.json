@@ -1,0 +1,53 @@
+{
+  "active_email": "duzenapp@gmail.com",
+  "accounts": {
+    "duzenapp@gmail.com": {
+      "email": "duzenapp@gmail.com",
+      "name": "Duzen",
+      "tier": "Google AI Pro",
+      "active": true,
+      "is_current_desktop_session": true,
+      "is_current_ide_session": false
+    },
+    "ghaderi.sabir@gmail.com": {
+      "email": "ghaderi.sabir@gmail.com",
+      "name": "Saber Ghaderi",
+      "tier": "Google AI Pro",
+      "active": false,
+      "is_current_desktop_session": false,
+      "is_current_ide_session": false
+    },
+    "rghaderi.saber@gmail.com": {
+      "email": "rghaderi.saber@gmail.com",
+      "name": "Saber Ghaderi",
+      "tier": "Google AI Pro",
+      "active": false,
+      "is_current_desktop_session": false,
+      "is_current_ide_session": false
+    },
+    "saber.ghaderi.ds@gmail.com": {
+      "email": "saber.ghaderi.ds@gmail.com",
+      "name": "Saber Ghaderi",
+      "tier": "Google AI Pro",
+      "active": false,
+      "is_current_desktop_session": false,
+      "is_current_ide_session": false
+    },
+    "simdatone@gmail.com": {
+      "email": "simdatone@gmail.com",
+      "name": "Sim Dat",
+      "tier": "Google AI Pro",
+      "active": false,
+      "is_current_desktop_session": false,
+      "is_current_ide_session": false
+    },
+    "taymaz.ghaderi@gmail.com": {
+      "email": "taymaz.ghaderi@gmail.com",
+      "name": "Taymaz Ghaderi",
+      "tier": "Google AI Pro",
+      "active": false,
+      "is_current_desktop_session": false,
+      "is_current_ide_session": false
+    }
+  }
+}
