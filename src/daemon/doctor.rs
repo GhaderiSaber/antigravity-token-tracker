@@ -1,9 +1,45 @@
 use super::models::{DiagnosticItem, DiagnosticStatus, DoctorReport};
 use crate::auth::{discover_antigravity_desktop_app, discover_antigravity_ide};
 use crate::balancer::has_account_credentials;
+use crate::shield::{EgressGeo, ShieldConfig};
 use crate::storage::{default_config_dir, load_accounts};
 use std::time::Duration;
 
+/// Evaluates Geo-Shield policy for the provided configuration and egress geolocation.
+#[must_use]
+pub fn build_geo_shield_diagnostic(cfg: &ShieldConfig, geo: &EgressGeo) -> DiagnosticItem {
+    let (is_allowed, reason) = crate::shield::is_ip_allowed(geo, cfg);
+
+    DiagnosticItem {
+        component: "Geo-Shield Protection".into(),
+        status: if is_allowed {
+            DiagnosticStatus::Pass
+        } else {
+            DiagnosticStatus::Fail
+        },
+        details: format!(
+            "Shield: {}, Egress IP: {} ({}), Policy: {}",
+            if cfg.enabled { "ENABLED" } else { "DISABLED" },
+            geo.ip,
+            geo.country_code,
+            reason
+        ),
+    }
+}
+
+/// Aggregates individual [`DiagnosticItem`] statuses into an overall [`DiagnosticStatus`].
+#[must_use]
+pub fn compute_overall_status(items: &[DiagnosticItem]) -> DiagnosticStatus {
+    if items.iter().any(|item| item.status.is_fail()) {
+        DiagnosticStatus::Fail
+    } else if items.iter().any(|item| item.status.is_warn()) {
+        DiagnosticStatus::Warn
+    } else {
+        DiagnosticStatus::Pass
+    }
+}
+
+/// Runs the full diagnostic check suite across keyring, API connectivity, IDE/desktop discovery, accounts, and Geo-Shield.
 pub async fn run_doctor_suite() -> DoctorReport {
     let mut items = Vec::new();
     let mut has_fail = false;
@@ -172,23 +208,11 @@ pub async fn run_doctor_suite() -> DoctorReport {
     let config_dir = default_config_dir();
     let cfg = crate::shield::load_shield_config(&config_dir);
     let geo = crate::shield::get_ip_geo(false).await;
-    let (is_allowed, reason) = crate::shield::is_ip_allowed(&geo, &cfg);
-
-    items.push(DiagnosticItem {
-        component: "Geo-Shield Protection".into(),
-        status: if is_allowed {
-            DiagnosticStatus::Pass
-        } else {
-            DiagnosticStatus::Fail
-        },
-        details: format!(
-            "Shield: {}, Egress IP: {} ({}), Policy: {}",
-            if cfg.enabled { "ENABLED" } else { "DISABLED" },
-            geo.ip,
-            geo.country_code,
-            reason
-        ),
-    });
+    let geo_item = build_geo_shield_diagnostic(&cfg, &geo);
+    if geo_item.status.is_fail() {
+        has_fail = true;
+    }
+    items.push(geo_item);
 
     let overall = if has_fail {
         DiagnosticStatus::Fail

@@ -30,13 +30,22 @@ use std::sync::LazyLock;
 use tokio::sync::broadcast;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 static SSE_TX: LazyLock<broadcast::Sender<String>> = LazyLock::new(|| {
     let (tx, _rx) = broadcast::channel(100);
     tx
 });
 
+/// Errors returned by [`start_web_server`].
+#[derive(Debug, thiserror::Error)]
+pub enum WebError {
+    /// Failed to bind TCP listener or serve HTTP traffic.
+    #[error("web server I/O error: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+/// Broadcasts a typed JSON event to all connected Server-Sent Events (`/api/events`) subscribers.
 pub fn broadcast_event(event_type: &str, data: serde_json::Value) {
     let payload = json!({
         "type": event_type,
@@ -45,38 +54,86 @@ pub fn broadcast_event(event_type: &str, data: serde_json::Value) {
     let _ = SSE_TX.send(payload.to_string());
 }
 
+#[cfg(test)]
+pub(crate) fn subscribe_events() -> broadcast::Receiver<String> {
+    SSE_TX.subscribe()
+}
+
+fn matches_localhost_host_port(host_port: &str, host: &str) -> bool {
+    if host_port == host {
+        return true;
+    }
+    host_port
+        .strip_prefix(host)
+        .and_then(|rest| rest.strip_prefix(':'))
+        .is_some_and(|port| !port.is_empty() && port.parse::<u16>().is_ok())
+}
+
+fn is_localhost_origin(origin: &axum::http::HeaderValue) -> bool {
+    let Ok(raw) = origin.to_str() else {
+        return false;
+    };
+    let Some(host_port) = raw.strip_prefix("http://") else {
+        return false;
+    };
+    matches_localhost_host_port(host_port, "localhost")
+        || matches_localhost_host_port(host_port, "127.0.0.1")
+}
+
+/// Query parameters for `/api/quota`.
 #[derive(Deserialize, Default)]
 pub struct QuotaQueryParams {
+    /// Bypass the local quota cache when `true`.
     pub force: Option<bool>,
 }
 
+/// Query parameters for `/api/history`.
 #[derive(Deserialize, Default)]
 pub struct HistoryQueryParams {
+    /// Lookback window in hours (defaults to `24.0`).
     pub hours: Option<f64>,
 }
 
+/// Query parameters for `/api/ip`.
 #[derive(Deserialize, Default)]
 pub struct IpQueryParams {
+    /// Force a fresh egress IP geolocation lookup when `true`.
     pub refresh: Option<bool>,
 }
 
+/// Query parameters for `/api/doctor`.
 #[derive(Deserialize, Default)]
 pub struct DoctorQueryParams {
+    /// Optional flag reserved for extended validation.
     pub validate: Option<bool>,
 }
 
+/// Query or JSON body parameters for `/api/switch`.
 #[derive(Deserialize, Default)]
 pub struct SwitchParams {
+    /// Target account email address.
     pub email: Option<String>,
+    /// Target surface (`desktop`, `ide`, or `both`).
     pub surface: Option<String>,
 }
 
+/// Query parameters for `/api/sync-surfaces`.
 #[derive(Deserialize, Default)]
 pub struct SyncSurfacesParams {
+    /// Surface alignment target (`ide` or `desktop`).
     pub target: Option<String>,
 }
 
+/// Builds the Axum [`Router`] for the local web dashboard API, SSE stream, and embedded SPA assets.
 pub fn create_router() -> Router {
+    let cors = CorsLayer::new()
+        .allow_headers(Any)
+        .allow_methods(Any)
+        .allow_origin(AllowOrigin::predicate(|origin, _req_parts| {
+            is_localhost_origin(origin)
+        }))
+        .expose_headers(Any);
+
     Router::new()
         .route("/api/events", get(sse_handler))
         .route("/api/quota", get(get_quota_handler))
@@ -100,7 +157,7 @@ pub fn create_router() -> Router {
         )
         .route("/api/doctor", get(get_doctor_handler))
         .fallback(static_handler)
-        .layer(CorsLayer::permissive())
+        .layer(cors)
 }
 
 async fn sse_handler() -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
@@ -484,7 +541,12 @@ async fn get_doctor_handler(Query(_params): Query<DoctorQueryParams>) -> Json<se
     Json(json!(diag))
 }
 
-pub async fn start_web_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
+/// Starts the local web dashboard HTTP server on `127.0.0.1:<port>`.
+///
+/// # Errors
+///
+/// Returns [`WebError`] if binding the TCP listener or serving HTTP connections fails.
+pub async fn start_web_server(port: u16) -> Result<(), WebError> {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let app = create_router();
     let listener = tokio::net::TcpListener::bind(addr).await?;

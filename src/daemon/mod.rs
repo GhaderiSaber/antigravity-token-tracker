@@ -7,11 +7,26 @@ pub mod failover;
 pub mod models;
 pub mod notifier;
 
-pub use daemon::*;
-pub use doctor::*;
-pub use failover::*;
-pub use models::*;
-pub use notifier::*;
+pub use daemon::{
+    DaemonError, DaemonRunOptions, FailoverRestart, default_token_history_file,
+    record_token_history_snapshot, run_daemon, run_daemon_step, run_daemon_step_with_options,
+    run_daemon_step_with_snapshot, run_daemon_with_options, run_daemon_with_snapshot,
+};
+pub use doctor::{build_geo_shield_diagnostic, compute_overall_status, run_doctor_suite};
+pub use failover::{
+    account_primary_quota, active_account, active_sessions, default_failover_state_file,
+    evaluate_and_execute_failover, failover_status, find_best_failover_candidate,
+    get_account_primary_quota, get_active_account, get_active_sessions, get_failover_status,
+    load_failover_state, save_failover_state,
+};
+pub use models::{
+    DaemonTickSnapshot, DiagnosticItem, DiagnosticStatus, DoctorReport, FailoverDecision,
+    FailoverEvent, FailoverState,
+};
+pub use notifier::{
+    send_desktop_notification, send_desktop_notification_with_actions,
+    spawn_notification_action_listener,
+};
 
 #[cfg(test)]
 mod tests {
@@ -134,5 +149,141 @@ mod tests {
         drop(tx);
         let res = run_daemon_with_options(custom, Some(rx)).await;
         assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_doctor_geo_shield_disallowed_produces_overall_fail() {
+        let cfg = crate::shield::ShieldConfig {
+            enabled: true,
+            mode: crate::shield::ShieldMode::Restricted,
+            ..Default::default()
+        };
+        let blocked_geo = crate::shield::EgressGeo {
+            ip: "5.6.7.8".into(),
+            country_code: "IR".into(),
+            country_name: "Iran".into(),
+            is_restricted: true,
+            ..Default::default()
+        };
+
+        let geo_item = build_geo_shield_diagnostic(&cfg, &blocked_geo);
+        assert_eq!(geo_item.status, DiagnosticStatus::Fail);
+
+        let items = vec![
+            DiagnosticItem {
+                component: "Linux Secret Service".into(),
+                status: DiagnosticStatus::Pass,
+                details: "ok".into(),
+            },
+            geo_item,
+        ];
+        assert_eq!(compute_overall_status(&items), DiagnosticStatus::Fail);
+    }
+
+    #[tokio::test]
+    async fn test_run_daemon_returns_daemon_error_and_tick_snapshot_publishes() {
+        let (snap_tx, snap_rx) = tokio::sync::watch::channel::<Option<DaemonTickSnapshot>>(None);
+        let (shut_tx, shut_rx) = tokio::sync::watch::channel(true);
+        drop(shut_tx);
+
+        let opts = DaemonRunOptions::new();
+        let res: Result<(), DaemonError> =
+            run_daemon_with_snapshot(opts, Some(shut_rx), Some(snap_tx)).await;
+        assert!(res.is_ok());
+        assert!(snap_rx.borrow().is_none());
+
+        let (shut_tx2, shut_rx2) = tokio::sync::watch::channel(true);
+        drop(shut_tx2);
+        let res2: Result<(), DaemonError> = run_daemon(1, false, Some(shut_rx2)).await;
+        assert!(res2.is_ok());
+    }
+
+    #[test]
+    fn test_publish_tick_updates_broadcasts_sse_and_snapshot() {
+        let mut rx = crate::web::server::subscribe_events();
+        let (snap_tx, snap_rx) = tokio::sync::watch::channel::<Option<DaemonTickSnapshot>>(None);
+
+        let mut quotas = HashMap::new();
+        quotas.insert(
+            "user@example.com".into(),
+            crate::quota::AccountQuotaResult {
+                email: "user@example.com".into(),
+                name: "User".into(),
+                tier: "Pro".into(),
+                is_current_ide_session: true,
+                is_current_desktop_session: false,
+                groups: vec![],
+                models: vec![],
+                checked_at: 1234.0,
+                is_cached: false,
+                error: None,
+            },
+        );
+        let geo = crate::shield::EgressGeo {
+            ip: "1.2.3.4".into(),
+            country_code: "US".into(),
+            ..Default::default()
+        };
+        let balancer_res = crate::balancer::BalancerDecision {
+            triggered: true,
+            reason: "ROTATED".into(),
+            message: "rotated".into(),
+            dry_run: None,
+            strategy: None,
+            from_account: None,
+            from_quota_pct: None,
+            to_account: None,
+            to_quota_pct: None,
+            cooldown_remaining: None,
+            error: None,
+        };
+        let failover_res = FailoverDecision {
+            triggered: true,
+            reason: "SUCCESS".into(),
+            message: "switched".into(),
+            dry_run: None,
+            from_account: None,
+            to_account: None,
+            to_quota_pct: None,
+            error: None,
+        };
+
+        daemon::publish_tick_updates(
+            quotas,
+            geo.clone(),
+            &balancer_res,
+            &failover_res,
+            Some(&snap_tx),
+        );
+
+        let ev1 = rx.try_recv().expect("expected quota_updated SSE event");
+        let ev2 = rx.try_recv().expect("expected balancer_rotated SSE event");
+        let ev3 = rx
+            .try_recv()
+            .expect("expected failover_triggered SSE event");
+        assert!(ev1.contains("\"type\":\"quota_updated\""));
+        assert!(ev2.contains("\"type\":\"balancer_rotated\""));
+        assert!(ev3.contains("\"type\":\"failover_triggered\""));
+
+        let snapshot = snap_rx
+            .borrow()
+            .clone()
+            .expect("expected snapshot to be published");
+        assert!(snapshot.quotas.contains_key("user@example.com"));
+        assert_eq!(snapshot.geo, geo);
+        assert!(snapshot.balancer_triggered);
+        assert!(snapshot.failover_triggered);
+    }
+
+    #[tokio::test]
+    async fn test_notifier_signatures_compile() {
+        let _fut = send_desktop_notification_with_actions(
+            "Title",
+            "Body",
+            "normal",
+            &[("switch", "Switch")],
+        );
+        let handle = spawn_notification_action_listener(|_action| {});
+        handle.abort();
     }
 }
