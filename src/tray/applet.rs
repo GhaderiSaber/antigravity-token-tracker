@@ -5,6 +5,7 @@ use crate::storage::models::AccountProfile;
 use crate::tray::icon::{QuotaIndicator, default_icon_cache_dir};
 use ksni::menu::{StandardItem, SubMenu};
 use ksni::{Icon, MenuItem, OfflineReason, ToolTip, Tray};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -56,6 +57,8 @@ pub struct TrayState {
     pub balancer_strategy: BalancerStrategy,
     /// Highest-quota standby failover candidate `(email, remaining_percent)`, if any.
     pub backup_candidate: Option<(String, f64)>,
+    /// Primary weekly quota percentage keyed by lowercase account email.
+    pub account_quotas: HashMap<String, f64>,
 }
 
 /// Filters registered accounts to those eligible for manual switching.
@@ -211,11 +214,14 @@ impl Tray for AntigravityTray {
                 .into_iter()
                 .map(|acc| {
                     let email = acc.email.clone();
-                    let email_capture = email.clone();
+                    let label = match st.account_quotas.get(&email.trim().to_lowercase()) {
+                        Some(pct) => format!("⚡ Switch to {email} ({pct:.1}%)"),
+                        None => format!("⚡ Switch to {email}"),
+                    };
                     StandardItem {
-                        label: format!("⚡ Switch to {email}"),
+                        label,
                         activate: Box::new(move |tray: &mut Self| {
-                            tray.send_cmd(TrayCommand::SwitchAccount(email_capture.clone()));
+                            tray.send_cmd(TrayCommand::SwitchAccount(email.clone()));
                         }),
                         ..Default::default()
                     }
@@ -343,5 +349,85 @@ impl Tray for AntigravityTray {
         );
 
         items
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_switch_submenu_labels_include_quota_percent_when_available_and_omit_otherwise() {
+        let mut account_quotas = HashMap::new();
+        account_quotas.insert("backup@example.com".to_string(), 87.5);
+        account_quotas.insert("mixcase@example.com".to_string(), 42.3);
+
+        let state = TrayState {
+            indicator: QuotaIndicator::Available(60.0),
+            active_email: Some("active@example.com".into()),
+            active_summary: "active@example.com: 60.0% remaining".into(),
+            icon_name: "quota_60".into(),
+            icon_data: Arc::new(Vec::new()),
+            icon_width: 48,
+            icon_height: 48,
+            accounts: vec![
+                AccountProfile {
+                    email: "active@example.com".into(),
+                    is_current_desktop_session: Some(true),
+                    ..Default::default()
+                },
+                AccountProfile {
+                    email: "backup@example.com".into(),
+                    ..Default::default()
+                },
+                AccountProfile {
+                    email: "MixCase@Example.COM".into(),
+                    ..Default::default()
+                },
+                AccountProfile {
+                    email: "unpolled@example.com".into(),
+                    ..Default::default()
+                },
+            ],
+            geo_summary: String::new(),
+            is_restricted: false,
+            is_shield_enabled: false,
+            is_balancer_enabled: false,
+            balancer_strategy: BalancerStrategy::ExpiryFirst,
+            backup_candidate: Some(("backup@example.com".into(), 87.5)),
+            account_quotas,
+        };
+
+        let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+        let tray = AntigravityTray {
+            state: Arc::new(Mutex::new(state)),
+            cmd_tx,
+        };
+
+        let menu = tray.menu();
+        let switch_labels: Vec<String> = menu
+            .into_iter()
+            .find_map(|item| match item {
+                MenuItem::SubMenu(sub) if sub.label == "🔄 Switch Account" => Some(
+                    sub.submenu
+                        .into_iter()
+                        .filter_map(|sub_item| match sub_item {
+                            MenuItem::Standard(std_item) => Some(std_item.label),
+                            _ => None,
+                        })
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .expect("expected Switch Account submenu");
+
+        assert_eq!(
+            switch_labels,
+            vec![
+                "⚡ Switch to backup@example.com (87.5%)",
+                "⚡ Switch to MixCase@Example.COM (42.3%)",
+                "⚡ Switch to unpolled@example.com",
+            ]
+        );
     }
 }
