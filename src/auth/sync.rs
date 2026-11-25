@@ -1,4 +1,5 @@
 use super::keyring::get_desktop_keyring_token;
+use super::models::DiscoveredSession;
 use super::oauth::ensure_valid_token;
 use super::process_discovery::{discover_antigravity_desktop_app, discover_antigravity_ide};
 use super::sqlite::{
@@ -7,6 +8,24 @@ use super::sqlite::{
 };
 use crate::storage::{AccountProfile, StorageManager};
 use std::collections::HashMap;
+
+pub(super) fn apply_desktop_session_metadata(
+    existing: &mut AccountProfile,
+    session: &DiscoveredSession,
+) {
+    if session.name.is_some() {
+        existing.name.clone_from(&session.name);
+    }
+    if session.tier.is_some() {
+        existing.tier.clone_from(&session.tier);
+    }
+    if session.port.is_some() {
+        existing.app_port = session.port;
+    }
+    if session.csrf_token.is_some() {
+        existing.app_csrf_token.clone_from(&session.csrf_token);
+    }
+}
 
 pub async fn sync_from_antigravity(
     storage: &StorageManager,
@@ -41,14 +60,7 @@ pub async fn sync_from_antigravity(
 
         existing.email.clone_from(d_email);
         if let Some(s) = &desktop_session {
-            if s.name.is_some() {
-                existing.name.clone_from(&s.name);
-            }
-            if s.tier.is_some() {
-                existing.tier.clone_from(&s.tier);
-            }
-            existing.app_port = s.port;
-            existing.app_csrf_token.clone_from(&s.csrf_token);
+            apply_desktop_session_metadata(existing, s);
         }
 
         if !access_tok.is_empty() {
