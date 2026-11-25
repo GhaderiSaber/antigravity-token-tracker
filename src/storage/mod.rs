@@ -144,4 +144,117 @@ mod tests {
             Some("Modern User")
         );
     }
+
+    #[test]
+    fn test_default_config_dir_uses_xdg_config_dir() {
+        let expected = dirs::config_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from(".config"))
+            .join("antigravity-token-tracker");
+        assert_eq!(default_config_dir(), expected);
+    }
+
+    #[test]
+    fn test_concurrent_upsert_accounts_preserves_all() {
+        let dir = tempdir().unwrap();
+        let worker_count = 16usize;
+
+        std::thread::scope(|s| {
+            for i in 0..worker_count {
+                let path = dir.path();
+                s.spawn(move || {
+                    let storage = StorageManager::new(path);
+                    let profile = AccountProfile {
+                        email: format!("User{i}@Example.com"),
+                        name: Some(format!("User {i}")),
+                        refresh_token: Some(format!("1//refresh-{i}")),
+                        ..Default::default()
+                    };
+                    storage.upsert_account(profile).unwrap();
+                });
+            }
+        });
+
+        let storage = StorageManager::new(dir.path());
+        assert!(
+            dir.path().join(".accounts.lock").exists(),
+            "expected advisory lockfile .accounts.lock to exist"
+        );
+        let accounts = storage.list_accounts().unwrap();
+        assert_eq!(
+            accounts.len(),
+            worker_count,
+            "all concurrent upserts should be preserved"
+        );
+        for i in 0..worker_count {
+            let email = format!("user{i}@example.com");
+            let found = accounts
+                .iter()
+                .find(|a| a.email == email)
+                .unwrap_or_else(|| panic!("missing upserted account {email}"));
+            assert_eq!(found.name.as_deref(), Some(format!("User {i}").as_str()));
+            assert_eq!(
+                found.refresh_token.as_deref(),
+                Some(format!("1//refresh-{i}").as_str())
+            );
+        }
+    }
+
+    #[test]
+    fn test_concurrent_upsert_remove_and_load_consistency() {
+        let dir = tempdir().unwrap();
+        let storage = StorageManager::new(dir.path());
+        for i in 0..4 {
+            storage
+                .upsert_account(AccountProfile {
+                    email: format!("seed{i}@example.com"),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+
+        std::thread::scope(|s| {
+            for i in 0..8 {
+                let path = dir.path();
+                s.spawn(move || {
+                    let mgr = StorageManager::new(path);
+                    mgr.upsert_account(AccountProfile {
+                        email: format!("added{i}@example.com"),
+                        ..Default::default()
+                    })
+                    .unwrap();
+                });
+            }
+            for i in 0..2 {
+                let path = dir.path();
+                s.spawn(move || {
+                    let mgr = StorageManager::new(path);
+                    let _ = mgr.remove_account(&format!("seed{i}@example.com")).unwrap();
+                });
+            }
+            for _ in 0..4 {
+                let path = dir.path();
+                s.spawn(move || {
+                    let mgr = StorageManager::new(path);
+                    let _ = mgr.load_accounts().unwrap();
+                });
+            }
+        });
+
+        let accounts = storage.list_accounts().unwrap();
+        assert_eq!(accounts.len(), 10);
+        for i in 2..4 {
+            assert!(
+                accounts
+                    .iter()
+                    .any(|a| a.email == format!("seed{i}@example.com"))
+            );
+        }
+        for i in 0..8 {
+            assert!(
+                accounts
+                    .iter()
+                    .any(|a| a.email == format!("added{i}@example.com"))
+            );
+        }
+    }
 }

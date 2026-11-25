@@ -6,8 +6,20 @@ use super::sqlite::{
     default_ide_state_db, extract_tokens_from_state_db, extract_user_email_from_state_db,
     extract_user_tier,
 };
-use crate::storage::{AccountProfile, StorageManager};
+use crate::storage::{AccountProfile, StorageError, StorageManager};
 use std::collections::HashMap;
+
+/// Errors returned while synchronizing Antigravity sessions and account storage.
+#[must_use]
+#[derive(Debug, thiserror::Error)]
+pub enum SyncError {
+    /// Failed to read or persist the accounts registry.
+    #[error("storage error: {0}")]
+    Storage(#[from] StorageError),
+    /// Failed due to an underlying filesystem or I/O error.
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+}
 
 pub(super) fn apply_desktop_session_metadata(
     existing: &mut AccountProfile,
@@ -27,12 +39,16 @@ pub(super) fn apply_desktop_session_metadata(
     }
 }
 
+/// Discovers active Antigravity Desktop and IDE sessions, refreshes OAuth tokens,
+/// and persists the updated account registry.
+///
+/// # Errors
+///
+/// Returns [`SyncError::Storage`] if persisting the updated accounts registry fails,
+/// or [`SyncError::Io`] if an underlying I/O failure occurs.
 pub async fn sync_from_antigravity(
     storage: &StorageManager,
-) -> Result<
-    (Option<String>, HashMap<String, AccountProfile>),
-    Box<dyn std::error::Error + Send + Sync>,
-> {
+) -> Result<(Option<String>, HashMap<String, AccountProfile>), SyncError> {
     let mut registry = storage.load_accounts().unwrap_or_default();
     let mut active_email: Option<String> = None;
 

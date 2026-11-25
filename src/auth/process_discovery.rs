@@ -17,6 +17,7 @@ static CSRF_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"--csrf_token[=\s]+([^\s]+)").expect("valid CSRF token regex pattern")
 });
 
+/// Maps process IDs to their local `127.0.0.1` listening TCP ports via `ss -tulpn`.
 #[must_use]
 pub fn listening_ports_by_pid() -> HashMap<i32, Vec<u16>> {
     let mut pid_ports: HashMap<i32, Vec<u16>> = HashMap::new();
@@ -41,12 +42,14 @@ pub fn listening_ports_by_pid() -> HashMap<i32, Vec<u16>> {
     pid_ports
 }
 
+/// Alias for [`listening_ports_by_pid`].
 #[inline]
 #[must_use]
 pub fn get_listening_ports_by_pid() -> HashMap<i32, Vec<u16>> {
     listening_ports_by_pid()
 }
 
+/// Queries a local Antigravity language server `GetUserStatus` RPC for `(email, name, tier)`.
 pub async fn query_local_user_status(
     port: u16,
     csrf_token: &str,
@@ -98,6 +101,7 @@ pub async fn query_local_user_status(
     None
 }
 
+/// Fetches raw quota summary JSON from the desktop language server `RetrieveUserQuotaSummary` RPC.
 pub async fn fetch_quota_from_desktop_app(port: u16, csrf_token: &str) -> Option<Value> {
     let url = format!(
         "https://127.0.0.1:{port}/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary"
@@ -181,6 +185,15 @@ pub fn resolve_desktop_session_email(
         .find_map(normalize_email)
 }
 
+/// Discovers an active Antigravity Desktop App session via `/proc`, keyring, `app_storage.json`, or `main.log`.
+///
+/// Starting with Antigravity v2.35+, the desktop `language_server` receives its host bridge
+/// authentication token over stdin (`--read_host_bridge_token_from_stdin` / `--host_bridge_url`)
+/// instead of exposing `--csrf_token` on the command line or in `main.log`. Because external
+/// processes cannot inspect that stdin-supplied token to authenticate local `GetUserStatus` RPCs,
+/// discovery falls back to the Secret Service desktop keyring ([`get_desktop_keyring_token`]) and
+/// `agy.onboarding.lastLoginUsername` in `~/.config/Antigravity/app_storage.json` whenever a
+/// desktop `language_server` process is running without a reachable RPC endpoint.
 pub async fn discover_antigravity_desktop_app() -> Option<DiscoveredSession> {
     let fallback_email = dirs::home_dir().and_then(|h| {
         read_desktop_last_login_username(&h.join(".config/Antigravity/app_storage.json"))
@@ -253,8 +266,9 @@ pub async fn discover_antigravity_desktop_app() -> Option<DiscoveredSession> {
         }
     }
 
-    // Antigravity v2.35+ passes --read_host_bridge_token_from_stdin instead of --csrf_token
-    // on the language_server command line; fall back to keyring / app_storage.json when the
+    // Antigravity v2.35+ passes --read_host_bridge_token_from_stdin / --host_bridge_url
+    // instead of --csrf_token on the language_server command line, so the RPC token cannot
+    // be read from /proc; fall back to keyring + agy.onboarding.lastLoginUsername when the
     // desktop language_server process is running.
     if let Some(pid) = headless_pid {
         let keyring_email = get_desktop_keyring_token().await.map(|rec| rec.email);
@@ -334,6 +348,7 @@ pub async fn discover_antigravity_desktop_app() -> Option<DiscoveredSession> {
     None
 }
 
+/// Discovers an active Antigravity IDE language server session from `/proc` and local RPC.
 pub async fn discover_antigravity_ide() -> Option<DiscoveredSession> {
     let pid_ports = listening_ports_by_pid();
 

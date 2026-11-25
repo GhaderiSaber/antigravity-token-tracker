@@ -7,12 +7,22 @@ pub mod process_discovery;
 pub mod sqlite;
 pub mod sync;
 
-pub use keyring::*;
-pub use models::*;
-pub use oauth::*;
-pub use process_discovery::*;
-pub use sqlite::*;
-pub use sync::*;
+pub use keyring::{desktop_keyring_token, get_desktop_keyring_token};
+pub use models::{DiscoveredSession, KeyringTokenRecord, OAuthTokens, UserInfo};
+pub use oauth::{
+    CLIENT_ID, CLIENT_SECRETS, TOKEN_URL, USERINFO_URL, ensure_valid_token, fetch_user_info,
+    refresh_access_token,
+};
+pub use process_discovery::{
+    discover_antigravity_desktop_app, discover_antigravity_ide, fetch_quota_from_desktop_app,
+    get_listening_ports_by_pid, is_desktop_language_server_cmdline, listening_ports_by_pid,
+    query_local_user_status, read_desktop_last_login_username, resolve_desktop_session_email,
+};
+pub use sqlite::{
+    default_ide_state_db, extract_tokens_from_state_db, extract_user_email_from_state_db,
+    extract_user_tier,
+};
+pub use sync::{SyncError, sync_from_antigravity};
 
 // Backwards-compatibility aliases
 pub use keyring as keyring_reader;
@@ -210,5 +220,22 @@ mod tests {
         assert_eq!(profile.tier.as_deref(), Some("Ultra"));
         assert_eq!(profile.app_port, Some(44000));
         assert_eq!(profile.app_csrf_token.as_deref(), Some("new-csrf"));
+    }
+
+    #[tokio::test]
+    async fn test_sync_error_implements_std_error_and_propagates_storage_failure() {
+        fn assert_error<E: std::error::Error + Send + Sync + 'static>() {}
+        assert_error::<SyncError>();
+
+        let dir = tempdir().unwrap();
+        let blocker_file = dir.path().join("not-a-directory");
+        std::fs::write(&blocker_file, b"occupied").unwrap();
+        let storage = crate::storage::StorageManager::new(&blocker_file);
+
+        let err = sync_from_antigravity(&storage)
+            .await
+            .expect_err("saving into a regular file path must return SyncError");
+        assert!(matches!(err, SyncError::Storage(_)));
+        assert!(!err.to_string().is_empty());
     }
 }

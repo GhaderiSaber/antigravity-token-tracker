@@ -1,9 +1,11 @@
 use crate::storage::models::{AccountProfile, AccountsRegistry};
-use std::fs::{self, File};
+use fs2::FileExt;
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
+/// Errors returned by [`StorageManager`] operations.
 #[derive(Error, Debug)]
 pub enum StorageError {
     #[error("IO error: {0}")]
@@ -16,13 +18,16 @@ pub enum StorageError {
 
 pub type Result<T> = std::result::Result<T, StorageError>;
 
+/// Returns the default configuration directory using XDG config home when available.
+#[must_use]
 pub fn default_config_dir() -> PathBuf {
-    dirs::home_dir().map_or_else(
-        || PathBuf::from(".config/antigravity-token-tracker"),
-        |h| h.join(".config").join("antigravity-token-tracker"),
+    dirs::config_dir().map_or_else(
+        || PathBuf::from(".config").join("antigravity-token-tracker"),
+        |c| c.join("antigravity-token-tracker"),
     )
 }
 
+#[must_use]
 pub fn default_history_file() -> PathBuf {
     dirs::home_dir().map_or_else(
         || PathBuf::from(".gemini/antigravity/token_history.jsonl"),
@@ -32,6 +37,22 @@ pub fn default_history_file() -> PathBuf {
                 .join("token_history.jsonl")
         },
     )
+}
+
+#[derive(Debug)]
+struct AccountsLockGuard(File);
+
+impl Drop for AccountsLockGuard {
+    fn drop(&mut self) {
+        // Unlock without unlinking so concurrent contenders always lock the same inode.
+        let _ = FileExt::unlock(&self.0);
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum LockMode {
+    Shared,
+    Exclusive,
 }
 
 #[derive(Debug, Clone)]
@@ -66,6 +87,17 @@ impl StorageManager {
         self.config_dir.join("accounts.json")
     }
 
+    /// Returns the path to the advisory lockfile coordinating access to `accounts.json`.
+    #[must_use]
+    pub fn accounts_lock_file(&self) -> PathBuf {
+        self.config_dir.join(".accounts.lock")
+    }
+
+    /// Ensures `self.config_dir` exists on disk with restrictive permissions on Unix.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::Io`] if directory creation fails.
     pub fn ensure_config_dir(&self) -> Result<()> {
         if !self.config_dir.exists() {
             fs::create_dir_all(&self.config_dir)?;
@@ -78,7 +110,31 @@ impl StorageManager {
         Ok(())
     }
 
-    pub fn load_accounts(&self) -> Result<AccountsRegistry> {
+    fn acquire_lock(&self, mode: LockMode) -> Result<AccountsLockGuard> {
+        self.ensure_config_dir()?;
+        let lock_path = self.accounts_lock_file();
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&lock_path, fs::Permissions::from_mode(0o600));
+        }
+
+        match mode {
+            LockMode::Shared => FileExt::lock_shared(&file)?,
+            LockMode::Exclusive => FileExt::lock_exclusive(&file)?,
+        }
+
+        Ok(AccountsLockGuard(file))
+    }
+
+    fn load_accounts_unlocked(&self) -> Result<AccountsRegistry> {
         let file_path = self.accounts_file();
         if !file_path.exists() {
             return Ok(AccountsRegistry::default());
@@ -93,7 +149,7 @@ impl StorageManager {
         Ok(registry)
     }
 
-    pub fn save_accounts(&self, registry: &AccountsRegistry) -> Result<()> {
+    fn save_accounts_unlocked(&self, registry: &AccountsRegistry) -> Result<()> {
         self.ensure_config_dir()?;
         let target_file = self.accounts_file();
         let tmp_file = target_file.with_extension("tmp");
@@ -115,6 +171,31 @@ impl StorageManager {
         Ok(())
     }
 
+    /// Loads the account registry under a shared advisory file lock.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::Io`] on lock/read failure or [`StorageError::Json`] if
+    /// `accounts.json` contains invalid JSON.
+    pub fn load_accounts(&self) -> Result<AccountsRegistry> {
+        if !self.config_dir.exists() {
+            return Ok(AccountsRegistry::default());
+        }
+        let _guard = self.acquire_lock(LockMode::Shared)?;
+        self.load_accounts_unlocked()
+    }
+
+    /// Atomically persists the account registry under an exclusive advisory file lock.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::Io`] or [`StorageError::Json`] if locking, serialization,
+    /// or atomic rename fails.
+    pub fn save_accounts(&self, registry: &AccountsRegistry) -> Result<()> {
+        let _guard = self.acquire_lock(LockMode::Exclusive)?;
+        self.save_accounts_unlocked(registry)
+    }
+
     pub fn account(&self, email: &str) -> Result<Option<AccountProfile>> {
         let registry = self.load_accounts()?;
         let key = email.trim().to_lowercase();
@@ -133,6 +214,12 @@ impl StorageManager {
         Ok(list)
     }
 
+    /// Inserts or updates an account profile atomically under an exclusive advisory file lock.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::InvalidData`] if `account.email` is empty, or
+    /// [`StorageError::Io`] / [`StorageError::Json`] if reading or saving fails.
     pub fn upsert_account(&self, mut account: AccountProfile) -> Result<AccountProfile> {
         let email = account.email.trim().to_lowercase();
         if email.is_empty() {
@@ -142,7 +229,8 @@ impl StorageManager {
         }
         account.email.clone_from(&email);
 
-        let mut registry = self.load_accounts()?;
+        let _guard = self.acquire_lock(LockMode::Exclusive)?;
+        let mut registry = self.load_accounts_unlocked()?;
         let now = chrono::Utc::now().timestamp_millis() as f64 / 1000.0;
         account.updated_at = Some(now);
 
@@ -164,12 +252,18 @@ impl StorageManager {
         }
 
         registry.accounts.insert(email, account.clone());
-        self.save_accounts(&registry)?;
+        self.save_accounts_unlocked(&registry)?;
         Ok(account)
     }
 
+    /// Removes an account by 1-based index, exact email, or name/email substring under an exclusive lock.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::Io`] or [`StorageError::Json`] if reading or saving fails.
     pub fn remove_account(&self, identifier: &str) -> Result<Option<AccountProfile>> {
-        let mut registry = self.load_accounts()?;
+        let _guard = self.acquire_lock(LockMode::Exclusive)?;
+        let mut registry = self.load_accounts_unlocked()?;
         let trimmed = identifier.trim();
 
         // 1. Try numeric 1-based index
@@ -182,7 +276,7 @@ impl StorageManager {
                 if registry.active_email.as_deref() == Some(key) {
                     registry.active_email = None;
                 }
-                self.save_accounts(&registry)?;
+                self.save_accounts_unlocked(&registry)?;
                 return Ok(removed);
             }
         }
@@ -193,7 +287,7 @@ impl StorageManager {
             if registry.active_email.as_deref() == Some(&key) {
                 registry.active_email = None;
             }
-            self.save_accounts(&registry)?;
+            self.save_accounts_unlocked(&registry)?;
             return Ok(Some(removed));
         }
 
@@ -215,7 +309,7 @@ impl StorageManager {
             if registry.active_email.as_deref() == Some(&matched_email) {
                 registry.active_email = None;
             }
-            self.save_accounts(&registry)?;
+            self.save_accounts_unlocked(&registry)?;
             return Ok(removed);
         }
 
