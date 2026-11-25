@@ -47,7 +47,7 @@ pub async fn run_tray(
     let shield_cfg = crate::shield::shield::load_shield_config(storage.config_dir());
     let bal_cfg = crate::balancer::balancer::load_balancer_config();
 
-    let (icon_data, icon_name) = icon::render_tray_icon(100.0, false);
+    let (icon_data, icon_name) = icon::render_tray_icon(icon::QuotaIndicator::Available(100.0));
 
     let initial_state = TrayState {
         min_pct: 100.0,
@@ -123,7 +123,12 @@ pub async fn run_tray(
                     summary = "No active session detected".to_string();
                 }
 
-                let (ic, ic_name) = icon::render_tray_icon(cur_min_pct, cur_exhausted);
+                let indicator = if cur_exhausted {
+                    icon::QuotaIndicator::Exhausted
+                } else {
+                    icon::QuotaIndicator::from_percent(cur_min_pct)
+                };
+                let (ic, ic_name) = icon::render_tray_icon(indicator);
                 let sh_cfg = crate::shield::shield::load_shield_config(storage.config_dir());
                 let b_cfg = crate::balancer::balancer::load_balancer_config();
 
@@ -157,13 +162,13 @@ mod tests {
 
     #[test]
     fn test_render_tray_icon() {
-        let (icon, name) = icon::render_tray_icon(85.0, false);
+        let (icon, name) = icon::render_tray_icon(icon::QuotaIndicator::Available(85.0));
         assert_eq!(icon.width, 48);
         assert_eq!(icon.height, 48);
         assert_eq!(icon.data.len(), 48 * 48 * 4);
         assert_eq!(name, "quota_85");
 
-        let (exh_icon, exh_name) = icon::render_tray_icon(0.0, true);
+        let (exh_icon, exh_name) = icon::render_tray_icon(icon::QuotaIndicator::Exhausted);
         assert_eq!(exh_name, "quota_exhausted");
         assert_eq!(exh_icon.data.len(), 48 * 48 * 4);
     }
