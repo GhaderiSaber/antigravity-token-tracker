@@ -1,8 +1,8 @@
 use super::burnrate::default_history_file;
-pub use super::models::{AccountQuotaResult, QuotaRefreshPolicy};
+use super::models::{AccountQuotaResult, QuotaRefreshPolicy};
 use crate::auth::{
-    discover_antigravity_desktop_app, discover_antigravity_ide, ensure_valid_token,
-    fetch_quota_from_desktop_app,
+    DiscoveredSession, discover_antigravity_desktop_app, discover_antigravity_ide,
+    ensure_valid_token, fetch_quota_from_desktop_app,
 };
 use crate::storage::{
     AccountProfile, ModelQuota, QuotaBucket, QuotaGroup, QuotaSnapshot, load_accounts,
@@ -12,18 +12,93 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::path::Path;
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
+use tokio::task::JoinSet;
 
+/// Endpoint returning grouped user quota summaries from Google CloudCode PA.
 pub const QUOTA_SUMMARY_URL: &str =
     "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary";
+
+/// Endpoint returning per-model quota buckets from Google CloudCode PA.
 pub const QUOTA_MODELS_URL: &str =
     "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota";
+
+/// Time-to-live in seconds for in-memory cached quota results.
 pub const CACHE_TTL_SECONDS: f64 = 600.0;
+
+const QUOTA_HTTP_TIMEOUT_SECS: u64 = 12;
+const QUOTA_USER_AGENT: &str = "antigravity/2.16.0";
 
 static QUOTA_CACHE: LazyLock<Mutex<HashMap<String, (f64, AccountQuotaResult)>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// Shared session discovery and HTTP client context for fetching account quotas.
+#[derive(Debug, Clone, Default)]
+pub struct QuotaFetchContext {
+    /// Active Antigravity Desktop session discovered for the fetch batch.
+    pub desktop_session: Option<DiscoveredSession>,
+    /// Active Antigravity IDE session discovered for the fetch batch.
+    pub ide_session: Option<DiscoveredSession>,
+    /// Shared HTTP client with configured timeout and user-agent.
+    pub client: Option<reqwest::Client>,
+}
+
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<QuotaFetchContext>();
+};
+
+impl QuotaFetchContext {
+    /// Creates an empty [`QuotaFetchContext`] with no discovered sessions or HTTP client.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Discovers active Desktop and IDE sessions once and builds a shared HTTP client.
+    pub async fn discover() -> Self {
+        let (desktop_session, ide_session) = tokio::join!(
+            discover_antigravity_desktop_app(),
+            discover_antigravity_ide()
+        );
+        Self {
+            desktop_session,
+            ide_session,
+            client: build_quota_http_client(),
+        }
+    }
+}
+
+fn build_quota_http_client() -> Option<reqwest::Client> {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(QUOTA_HTTP_TIMEOUT_SECS))
+        .user_agent(QUOTA_USER_AGENT)
+        .build()
+        .ok()
+}
+
+fn current_epoch_seconds() -> f64 {
+    chrono::Utc::now().timestamp_millis() as f64 / 1000.0
+}
+
+fn cached_quota_result(email: &str, now: f64) -> Option<AccountQuotaResult> {
+    let cache = QUOTA_CACHE.lock().expect("quota cache lock poisoned");
+    cache
+        .get(email)
+        .filter(|(cached_time, _)| now - cached_time < CACHE_TTL_SECONDS)
+        .map(|(_, cached_data)| cached_data.clone())
+}
+
+fn insert_quota_cache(email: String, now: f64, result: &AccountQuotaResult) {
+    QUOTA_CACHE
+        .lock()
+        .expect("quota cache lock poisoned")
+        .insert(email, (now, result.clone()));
+}
+
+/// Clears all entries from the in-memory quota cache.
 pub fn clear_quota_cache() {
     QUOTA_CACHE
         .lock()
@@ -31,8 +106,9 @@ pub fn clear_quota_cache() {
         .clear();
 }
 
-pub fn historical_quota(email: &str) -> Option<QuotaSnapshot> {
-    let history_file = default_history_file();
+/// Reconstructs the most recent historical quota snapshot for `email` from `history_file`.
+#[must_use]
+pub fn historical_quota_from_file(email: &str, history_file: &Path) -> Option<QuotaSnapshot> {
     if !history_file.is_file() {
         return None;
     }
@@ -41,7 +117,7 @@ pub fn historical_quota(email: &str) -> Option<QuotaSnapshot> {
     let mut last_record: Option<Value> = None;
     let mut last_timestamp: Option<f64> = None;
 
-    if let Ok(file) = File::open(&history_file) {
+    if let Ok(file) = File::open(history_file) {
         let reader = BufReader::new(file);
         for line in reader.lines().map_while(Result::ok) {
             let trimmed = line.trim();
@@ -58,7 +134,7 @@ pub fn historical_quota(email: &str) -> Option<QuotaSnapshot> {
                     .any(|v| v.get("weekly_pct").is_some_and(|p| !p.is_null()));
                 if has_weekly {
                     last_record = Some(acc_val.clone());
-                    last_timestamp = data.get("timestamp").and_then(serde_json::Value::as_f64);
+                    last_timestamp = data.get("timestamp").and_then(Value::as_f64);
                 }
             }
         }
@@ -66,15 +142,15 @@ pub fn historical_quota(email: &str) -> Option<QuotaSnapshot> {
 
     let record = last_record?;
     let groups_obj = record.get("groups")?.as_object()?;
-    let mut parsed_groups = Vec::new();
+    let mut parsed_groups = Vec::with_capacity(groups_obj.len());
 
     for (g_name, g_vals) in groups_obj {
-        let w_pct = g_vals.get("weekly_pct").and_then(serde_json::Value::as_f64);
+        let w_pct = g_vals.get("weekly_pct").and_then(Value::as_f64);
         let w_reset = g_vals
             .get("weekly_reset")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        let f_pct = g_vals.get("5h_pct").and_then(serde_json::Value::as_f64);
+        let f_pct = g_vals.get("5h_pct").and_then(Value::as_f64);
 
         let weekly_bucket = w_pct.map(|pct| QuotaBucket {
             bucket_id: Some(format!(
@@ -109,7 +185,7 @@ pub fn historical_quota(email: &str) -> Option<QuotaSnapshot> {
         });
     }
 
-    let now = chrono::Utc::now().timestamp_millis() as f64 / 1000.0;
+    let now = current_epoch_seconds();
     Some(QuotaSnapshot {
         checked_at: Some(last_timestamp.unwrap_or(now)),
         groups: parsed_groups,
@@ -120,11 +196,21 @@ pub fn historical_quota(email: &str) -> Option<QuotaSnapshot> {
     })
 }
 
+/// Reconstructs the most recent historical quota snapshot for `email` from the default history file.
+#[must_use]
+pub fn historical_quota(email: &str) -> Option<QuotaSnapshot> {
+    historical_quota_from_file(email, &default_history_file())
+}
+
+/// Compatibility alias for [`historical_quota`].
 #[inline]
+#[must_use]
 pub fn get_historical_quota(email: &str) -> Option<QuotaSnapshot> {
     historical_quota(email)
 }
 
+/// Parses grouped weekly and 5-hour quota buckets from a `retrieveUserQuotaSummary` response.
+#[must_use]
 pub fn parse_quota_summary(quota_summary_data: &Value) -> Vec<QuotaGroup> {
     let mut parsed_groups = Vec::new();
     let raw_groups = quota_summary_data
@@ -166,7 +252,7 @@ pub fn parse_quota_summary(quota_summary_data: &Value) -> Vec<QuotaGroup> {
                 .to_string();
             let remaining_fraction = b
                 .get("remainingFraction")
-                .and_then(serde_json::Value::as_f64)
+                .and_then(Value::as_f64)
                 .unwrap_or(0.0);
             let remaining_percent = ((remaining_fraction * 100.0) * 100.0).round() / 100.0;
             let reset_time = b
@@ -214,17 +300,22 @@ pub fn parse_quota_summary(quota_summary_data: &Value) -> Vec<QuotaGroup> {
     parsed_groups
 }
 
+/// Parses individual model quota buckets from a `retrieveUserQuota` response.
+#[must_use]
 pub fn parse_models_quota(models_data: &Value) -> Vec<ModelQuota> {
     let mut parsed_models = Vec::new();
     if let Some(buckets) = models_data.get("buckets").and_then(|b| b.as_array()) {
         for mb in buckets {
-            let model_id = match mb.get("modelId").and_then(|v| v.as_str()) {
-                Some(id) if !id.is_empty() => id.to_string(),
-                _ => continue,
+            let Some(id) = mb.get("modelId").and_then(|v| v.as_str()) else {
+                continue;
             };
+            if id.is_empty() {
+                continue;
+            }
+            let model_id = id.to_string();
             let frac = mb
                 .get("remainingFraction")
-                .and_then(serde_json::Value::as_f64)
+                .and_then(Value::as_f64)
                 .unwrap_or(0.0);
             let pct = ((frac * 100.0) * 100.0).round() / 100.0;
             let reset = mb
@@ -244,139 +335,177 @@ pub fn parse_models_quota(models_data: &Value) -> Vec<ModelQuota> {
     parsed_models
 }
 
-pub async fn fetch_account_quota(
-    account: &mut AccountProfile,
-    policy: impl Into<QuotaRefreshPolicy>,
+enum QuotaSource {
+    Live,
+    Cached,
+}
+
+struct QuotaResultPayload {
+    groups: Vec<QuotaGroup>,
+    models: Vec<ModelQuota>,
+    checked_at: f64,
+    source: QuotaSource,
+    error: Option<String>,
+}
+
+fn build_quota_result(
+    account: &AccountProfile,
+    email: &str,
+    payload: QuotaResultPayload,
 ) -> AccountQuotaResult {
-    let force_refresh = policy.into().is_force_refresh();
+    AccountQuotaResult {
+        email: email.to_string(),
+        name: account.name.clone().unwrap_or_default(),
+        tier: account.tier.clone().unwrap_or_else(|| "Standard".into()),
+        is_current_ide_session: account.is_current_ide_session.unwrap_or(false),
+        is_current_desktop_session: account.is_current_desktop_session.unwrap_or(false),
+        groups: payload.groups,
+        models: payload.models,
+        checked_at: payload.checked_at,
+        is_cached: matches!(payload.source, QuotaSource::Cached),
+        error: payload.error,
+    }
+}
+
+async fn fetch_from_local_session(
+    session: Option<&DiscoveredSession>,
+    email: &str,
+) -> Option<Value> {
+    let session = session?;
+    if !session.email.trim().eq_ignore_ascii_case(email) {
+        return None;
+    }
+    let (Some(port), Some(csrf)) = (session.port, &session.csrf_token) else {
+        return None;
+    };
+    fetch_quota_from_desktop_app(port, csrf).await
+}
+
+async fn post_cloudcode_json(client: &reqwest::Client, url: &str, token: &str) -> Option<Value> {
+    let resp = client
+        .post(url)
+        .bearer_auth(token)
+        .header("Content-Type", "application/json")
+        .body("{}")
+        .send()
+        .await
+        .ok()?;
+    if resp.status().is_success() {
+        resp.json::<Value>().await.ok()
+    } else {
+        None
+    }
+}
+
+async fn fetch_from_cloudcode_api(
+    account: &mut AccountProfile,
+    shared_client: Option<&reqwest::Client>,
+) -> (Option<Value>, Option<Value>) {
+    if account.access_token.is_none() && account.refresh_token.is_none() {
+        return (None, None);
+    }
+
+    let (token_opt, updated_acc) = ensure_valid_token(account.clone()).await;
+    let Some(token) = token_opt else {
+        return (None, None);
+    };
+
+    if updated_acc != *account {
+        *account = updated_acc;
+    }
+
+    let owned_client;
+    let client = match shared_client {
+        Some(client) => client,
+        None => {
+            owned_client = build_quota_http_client();
+            let Some(client) = owned_client.as_ref() else {
+                return (None, None);
+            };
+            client
+        }
+    };
+
+    tokio::join!(
+        post_cloudcode_json(client, QUOTA_SUMMARY_URL, &token),
+        post_cloudcode_json(client, QUOTA_MODELS_URL, &token),
+    )
+}
+
+async fn fetch_account_quota_inner(
+    account: &mut AccountProfile,
+    policy: QuotaRefreshPolicy,
+    ctx: &QuotaFetchContext,
+    history_file: Option<&Path>,
+) -> AccountQuotaResult {
     let email = account.email.trim().to_lowercase();
-    let now = chrono::Utc::now().timestamp_millis() as f64 / 1000.0;
+    let now = current_epoch_seconds();
 
-    if !force_refresh {
-        let cache = QUOTA_CACHE.lock().expect("quota cache lock poisoned");
-        if let Some((cached_time, cached_data)) = cache.get(&email)
-            && now - cached_time < CACHE_TTL_SECONDS
-        {
-            return cached_data.clone();
-        }
-    }
-
-    let mut quota_summary_data: Option<Value> = None;
-    let mut models_data: Option<Value> = None;
-
-    // Option A: Active Desktop App
-    let desktop_session = discover_antigravity_desktop_app().await;
-    if let Some(ds) = &desktop_session
-        && ds.email.trim().eq_ignore_ascii_case(&email)
-        && let (Some(port), Some(csrf)) = (ds.port, &ds.csrf_token)
+    if !policy.is_force_refresh()
+        && let Some(cached) = cached_quota_result(&email, now)
     {
-        quota_summary_data = fetch_quota_from_desktop_app(port, csrf).await;
+        return cached;
     }
 
-    // Option A2: Active IDE
+    // Option A / A2: Active Desktop App or IDE session
+    let mut quota_summary_data =
+        fetch_from_local_session(ctx.desktop_session.as_ref(), &email).await;
     if quota_summary_data.is_none() {
-        let ide_session = discover_antigravity_ide().await;
-        if let Some(is) = &ide_session
-            && is.email.trim().eq_ignore_ascii_case(&email)
-            && let (Some(port), Some(csrf)) = (is.port, &is.csrf_token)
-        {
-            quota_summary_data = fetch_quota_from_desktop_app(port, csrf).await;
-        }
+        quota_summary_data = fetch_from_local_session(ctx.ide_session.as_ref(), &email).await;
     }
 
     // Option B: Query Google CloudCode API using OAuth token
-    if quota_summary_data.is_none()
-        && (account.access_token.is_some() || account.refresh_token.is_some())
-    {
-        let (token_opt, updated_acc) = ensure_valid_token(account.clone()).await;
-        if let Some(token) = token_opt {
-            if updated_acc != *account {
-                *account = updated_acc.clone();
-                let _ = upsert_account(&updated_acc);
-            }
-
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(12))
-                .user_agent("antigravity/2.16.0")
-                .build();
-
-            if let Ok(client) = client {
-                let summary_res = client
-                    .post(QUOTA_SUMMARY_URL)
-                    .bearer_auth(&token)
-                    .header("Content-Type", "application/json")
-                    .body("{}")
-                    .send()
-                    .await;
-
-                if let Ok(resp) = summary_res
-                    && resp.status().is_success()
-                {
-                    quota_summary_data = resp.json::<Value>().await.ok();
-                }
-
-                let models_res = client
-                    .post(QUOTA_MODELS_URL)
-                    .bearer_auth(&token)
-                    .header("Content-Type", "application/json")
-                    .body("{}")
-                    .send()
-                    .await;
-
-                if let Ok(resp) = models_res
-                    && resp.status().is_success()
-                {
-                    models_data = resp.json::<Value>().await.ok();
-                }
-            }
-        }
+    let mut models_data = None;
+    if quota_summary_data.is_none() {
+        (quota_summary_data, models_data) =
+            fetch_from_cloudcode_api(account, ctx.client.as_ref()).await;
     }
 
     let Some(summary_val) = quota_summary_data else {
-        // Fallback to persistent last-known quota if available
+        // Fallback to persistent last-known quota or historical JSONL snapshot
         let mut last_known = account.last_known_quota.clone();
-        if last_known.as_ref().is_none_or(|k| k.groups.is_empty())
-            && let Some(hist) = historical_quota(&email)
-        {
-            account.last_known_quota = Some(hist.clone());
-            let _ = upsert_account(account);
-            last_known = Some(hist);
+        if last_known.as_ref().is_none_or(|k| k.groups.is_empty()) {
+            let hist = match history_file {
+                Some(path) => historical_quota_from_file(&email, path),
+                None => historical_quota(&email),
+            };
+            if let Some(hist) = hist {
+                account.last_known_quota = Some(hist.clone());
+                last_known = Some(hist);
+            }
         }
 
         if let Some(lk) = last_known
             && !lk.groups.is_empty()
         {
-            let result = AccountQuotaResult {
-                email: email.clone(),
-                name: account.name.clone().unwrap_or_default(),
-                tier: account.tier.clone().unwrap_or_else(|| "Standard".into()),
-                is_current_ide_session: account.is_current_ide_session.unwrap_or(false),
-                is_current_desktop_session: account.is_current_desktop_session.unwrap_or(false),
-                groups: lk.groups,
-                models: lk.models,
-                checked_at: lk.checked_at.unwrap_or(now),
-                is_cached: true,
-                error: None,
-            };
-            QUOTA_CACHE
-                .lock()
-                .expect("quota cache lock poisoned")
-                .insert(email, (now, result.clone()));
+            let result = build_quota_result(
+                account,
+                &email,
+                QuotaResultPayload {
+                    groups: lk.groups,
+                    models: lk.models,
+                    checked_at: lk.checked_at.unwrap_or(now),
+                    source: QuotaSource::Cached,
+                    error: None,
+                },
+            );
+            insert_quota_cache(email, now, &result);
             return result;
         }
 
-        return AccountQuotaResult {
-            email: email.clone(),
-            name: account.name.clone().unwrap_or_default(),
-            tier: account.tier.clone().unwrap_or_else(|| "Standard".into()),
-            is_current_ide_session: account.is_current_ide_session.unwrap_or(false),
-            is_current_desktop_session: account.is_current_desktop_session.unwrap_or(false),
-            groups: Vec::new(),
-            models: Vec::new(),
-            checked_at: now,
-            is_cached: false,
-            error: Some("Account session inactive. Log into Antigravity to refresh quota.".into()),
-        };
+        return build_quota_result(
+            account,
+            &email,
+            QuotaResultPayload {
+                groups: Vec::new(),
+                models: Vec::new(),
+                checked_at: now,
+                source: QuotaSource::Live,
+                error: Some(
+                    "Account session inactive. Log into Antigravity to refresh quota.".into(),
+                ),
+            },
+        );
     };
 
     let parsed_groups = parse_quota_summary(&summary_val);
@@ -385,18 +514,17 @@ pub async fn fetch_account_quota(
         .map(parse_models_quota)
         .unwrap_or_default();
 
-    let result = AccountQuotaResult {
-        email: email.clone(),
-        name: account.name.clone().unwrap_or_default(),
-        tier: account.tier.clone().unwrap_or_else(|| "Standard".into()),
-        is_current_ide_session: account.is_current_ide_session.unwrap_or(false),
-        is_current_desktop_session: account.is_current_desktop_session.unwrap_or(false),
-        groups: parsed_groups.clone(),
-        models: parsed_models.clone(),
-        checked_at: now,
-        is_cached: false,
-        error: None,
-    };
+    let result = build_quota_result(
+        account,
+        &email,
+        QuotaResultPayload {
+            groups: parsed_groups.clone(),
+            models: parsed_models.clone(),
+            checked_at: now,
+            source: QuotaSource::Live,
+            error: None,
+        },
+    );
 
     account.last_known_quota = Some(QuotaSnapshot {
         checked_at: Some(now),
@@ -406,31 +534,121 @@ pub async fn fetch_account_quota(
         is_gemini_exhausted: None,
         is_3p_exhausted: None,
     });
-    let _ = upsert_account(account);
 
-    QUOTA_CACHE
-        .lock()
-        .expect("quota cache lock poisoned")
-        .insert(email, (now, result.clone()));
-
+    insert_quota_cache(email, now, &result);
     result
 }
 
-pub async fn fetch_all_accounts_quota(
+/// Fetches quota for a single `account` using pre-discovered sessions and a shared HTTP client.
+///
+/// Updates `account` in memory (tokens or `last_known_quota`) without writing to disk.
+pub async fn fetch_account_quota_with_context(
+    account: &mut AccountProfile,
     policy: impl Into<QuotaRefreshPolicy>,
-) -> HashMap<String, AccountQuotaResult> {
-    let force_refresh = policy.into().is_force_refresh();
-    let mut registry = load_accounts().unwrap_or_default();
-    let mut results = HashMap::new();
+    ctx: &QuotaFetchContext,
+) -> AccountQuotaResult {
+    fetch_account_quota_inner(account, policy.into(), ctx, None).await
+}
 
-    for (email, mut acc) in registry.accounts.clone() {
-        if !email.is_empty() {
-            let res = fetch_account_quota(&mut acc, force_refresh).await;
-            registry.accounts.insert(email.clone(), acc);
+/// Fetches quota for a single `account` and persists any profile updates to storage.
+pub async fn fetch_account_quota(
+    account: &mut AccountProfile,
+    policy: impl Into<QuotaRefreshPolicy>,
+) -> AccountQuotaResult {
+    let policy = policy.into();
+    let email = account.email.trim().to_lowercase();
+    let now = current_epoch_seconds();
+
+    if !policy.is_force_refresh()
+        && let Some(cached) = cached_quota_result(&email, now)
+    {
+        return cached;
+    }
+
+    let ctx = QuotaFetchContext::discover().await;
+    let original = account.clone();
+    let result = fetch_account_quota_with_context(account, policy, &ctx).await;
+    if *account != original {
+        let _ = upsert_account(account);
+    }
+    result
+}
+
+pub(super) async fn fetch_accounts_quota_with_history(
+    accounts: &mut HashMap<String, AccountProfile>,
+    policy: impl Into<QuotaRefreshPolicy>,
+    ctx: &QuotaFetchContext,
+    history_file: Option<&Path>,
+) -> (HashMap<String, AccountQuotaResult>, bool) {
+    let policy = policy.into();
+    let history_path = history_file.map(Path::to_path_buf);
+    let mut join_set = JoinSet::new();
+
+    for (email, acc) in accounts.iter() {
+        if email.is_empty() {
+            continue;
+        }
+        let email_key = email.clone();
+        let mut acc_owned = acc.clone();
+        let ctx_owned = ctx.clone();
+        let hist_owned = history_path.clone();
+
+        join_set.spawn(async move {
+            let original = acc_owned.clone();
+            let res = fetch_account_quota_inner(
+                &mut acc_owned,
+                policy,
+                &ctx_owned,
+                hist_owned.as_deref(),
+            )
+            .await;
+            let acc_changed = acc_owned != original;
+            (email_key, acc_owned, acc_changed, res)
+        });
+    }
+
+    let mut results = HashMap::with_capacity(accounts.len());
+    let mut any_updated = false;
+
+    while let Some(joined) = join_set.join_next().await {
+        if let Ok((email, updated_acc, acc_changed, res)) = joined {
+            if acc_changed {
+                accounts.insert(email.clone(), updated_acc);
+                any_updated = true;
+            }
             results.insert(email, res);
         }
     }
 
-    let _ = save_accounts(&registry);
+    (results, any_updated)
+}
+
+/// Concurrently fetches quota for every account in `accounts` using a shared [`QuotaFetchContext`].
+pub async fn fetch_accounts_quota_with_context(
+    accounts: &mut HashMap<String, AccountProfile>,
+    policy: impl Into<QuotaRefreshPolicy>,
+    ctx: &QuotaFetchContext,
+) -> HashMap<String, AccountQuotaResult> {
+    let (results, _) = fetch_accounts_quota_with_history(accounts, policy, ctx, None).await;
+    results
+}
+
+/// Discovers active sessions once, fetches all registered account quotas concurrently, and saves changes once.
+pub async fn fetch_all_accounts_quota(
+    policy: impl Into<QuotaRefreshPolicy>,
+) -> HashMap<String, AccountQuotaResult> {
+    let policy = policy.into();
+    let mut registry = load_accounts().unwrap_or_default();
+    if registry.accounts.is_empty() {
+        return HashMap::new();
+    }
+
+    let ctx = QuotaFetchContext::discover().await;
+    let (results, updated) =
+        fetch_accounts_quota_with_history(&mut registry.accounts, policy, &ctx, None).await;
+
+    if updated {
+        let _ = save_accounts(&registry);
+    }
     results
 }
